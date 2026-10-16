@@ -19,6 +19,14 @@ To seed the administrator and starter categories, set `ADMIN_EMAIL` and `ADMIN_P
 
 The frontend dev server proxies `/api` to Express. `GET /api/v1/health` reports process health; `GET /api/v1/ready` returns `503` until MongoDB is connected.
 
+## Anonymous and signed-in workspaces
+
+The app opens directly into an anonymous workspace. Anonymous transactions and categories are kept in browser local storage; anonymous sessions cannot access private API resources. From Profile, a visitor can register with an email and password or sign in. Registration always creates a `user`; the client cannot assign the `admin` role. Sessions use an HttpOnly JWT cookie with CSRF protection.
+
+After sign-in, local transactions can be merged into the account workspace or the account workspace can be used as-is. Signed-in workspace changes are sent to the authenticated `/api/v1/auth/workspace` endpoint and stored per user in MongoDB. The workspace API is an initial local-first persistence bridge; the normalized transaction, budget and category collections remain the target for full domain CRUD.
+
+The UI supports English and Chinese, initially selected from the browser language, and includes light and dark appearance modes.
+
 ## Workspace layout
 
 - `frontend/`: React application, Vite configuration, API client and UI styles.

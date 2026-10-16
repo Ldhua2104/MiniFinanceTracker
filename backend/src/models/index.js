@@ -6,3 +6,4 @@ export { Notification } from './notification.model.js';
 export { EmailJob } from './email-job.model.js';
 export { AiAnalysis } from './ai-analysis.model.js';
 export { EmailVerification } from './email-verification.model.js';
+export { Workspace } from './workspace.model.js';

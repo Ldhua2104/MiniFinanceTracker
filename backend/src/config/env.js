@@ -15,8 +15,8 @@ const envSchema = z.object({
   DEEPSEEK_MODEL: z.string().optional().default(''),
   RESEND_API_KEY: z.string().optional().default(''),
   EMAIL_FROM: z.string().optional().default(''),
-  ADMIN_EMAIL: z.string().email().optional(),
-  ADMIN_PASSWORD: z.string().min(12).optional()
+  ADMIN_EMAIL: z.preprocess((value) => value === '' ? undefined : value, z.string().email().optional()),
+  ADMIN_PASSWORD: z.preprocess((value) => value === '' ? undefined : value, z.string().min(12).optional())
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -26,3 +26,8 @@ if (!parsed.success) {
 }
 
 export const env = Object.freeze(parsed.data);
+
+if (env.NODE_ENV === 'production' && env.JWT_SECRET === 'development-only-change-this-secret') {
+  console.error('JWT_SECRET must be configured with a production secret before starting the server.');
+  process.exit(1);
+}

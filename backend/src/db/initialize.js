@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { connectDatabase, disconnectDatabase } from './connect.js';
-import { User, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, EmailVerification } from '../models/index.js';
+import { User, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, EmailVerification, Workspace } from '../models/index.js';
 
 const definitions = [
   [User, { bsonType: 'object', required: ['email', 'passwordHash', 'role', 'status', 'baseCurrency'], properties: {
@@ -29,6 +29,9 @@ const definitions = [
   } }],
   [EmailVerification, { bsonType: 'object', required: ['userId', 'codeHash', 'expiresAt', 'attempts'], properties: {
     userId: { bsonType: 'objectId' }, codeHash: { bsonType: 'string' }, expiresAt: { bsonType: 'date' }, attempts: { bsonType: 'int', minimum: 0, maximum: 5 }, consumedAt: { bsonType: ['date', 'null'] }
+  } }],
+  [Workspace, { bsonType: 'object', required: ['userId'], properties: {
+    userId: { bsonType: 'objectId' }, categories: { bsonType: 'array' }, transactions: { bsonType: 'array' }, budgets: { bsonType: 'array' }, revision: { bsonType: ['int', 'long'], minimum: 0 }
   } }]
 ];
 

@@ -1,5 +1,7 @@
 export const CURRENCIES = Object.freeze(['USD', 'EUR', 'CNY', 'GBP']);
 export const USER_ROLES = Object.freeze(['user', 'admin']);
+// anonymous is a client-only role: anonymous workspaces are never authenticated or stored on the server.
+export const APP_ROLES = Object.freeze(['anonymous', ...USER_ROLES]);
 export const USER_STATUSES = Object.freeze(['active', 'disabled']);
 export const TRANSACTION_TYPES = Object.freeze(['income', 'expense']);
 export const ANALYSIS_STATUSES = Object.freeze(['pending', 'processing', 'completed', 'failed']);
