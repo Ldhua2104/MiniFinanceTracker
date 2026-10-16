@@ -13,9 +13,10 @@ export function makeStarterWorkspace() {
     categories: [
       { id: id(), name: 'Salary', type: 'income', archived: false },
       { id: id(), name: 'Food', type: 'expense', archived: false },
-      { id: id(), name: 'Transport', type: 'expense', archived: false },
+      { id: id(), name: 'Transportation', type: 'expense', archived: false },
       { id: id(), name: 'Housing', type: 'expense', archived: false },
-      { id: id(), name: 'Other', type: 'expense', archived: false }
+      { id: id(), name: 'Other', type: 'expense', archived: false },
+      { id: id(), name: 'None', type: 'expense', archived: false }
     ],
     transactions: [],
     budgets: [],
@@ -28,7 +29,12 @@ export function ensureStarterCategories(workspace) {
     ...emptyWorkspace(),
     ...workspace,
     accounts: workspace.accounts ?? [],
-    categories: workspace.categories?.length ? workspace.categories : makeStarterWorkspace().categories
+    categories: workspace.categories?.length
+      ? [
+          ...workspace.categories.map((item) => item.name === 'Transport' ? { ...item, name: 'Transportation' } : item),
+          ...(workspace.categories.some((item) => item.name.toLowerCase() === 'none') ? [] : [{ id: crypto.randomUUID(), name: 'None', type: 'expense', archived: false }])
+        ]
+      : makeStarterWorkspace().categories
   };
 }
 

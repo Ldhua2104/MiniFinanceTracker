@@ -19,6 +19,7 @@ const messages = {
     migrationText: 'Choose how to continue. Merging uploads your anonymous workspace to this account.', merge: 'Merge local data', keepServer: 'Use account data',
     saved: 'Saved', saveFailed: 'Could not save your data. Please try again.', roleUser: 'Member account', roleAnonymous: 'Anonymous',
     currency: 'Currency', delete: 'Delete', fieldRequired: 'Please complete the required fields.',
+    confirmDelete: 'Delete this transaction? This cannot be undone.',
     footer: 'Personal finance, kept simple', overviewHint: 'Your monthly picture at a glance', transactionsCount: 'transactions'
   },
   zh: {
@@ -41,6 +42,7 @@ const messages = {
     migrationText: '选择继续方式。合并会将匿名空间的数据上传到当前账户。', merge: '合并本地数据', keepServer: '使用账户数据',
     saved: '已保存', saveFailed: '保存失败，请重试。', roleUser: '已登录账户', roleAnonymous: '匿名使用',
     currency: '币种', delete: '删除', fieldRequired: '请填写必填项目。',
+    confirmDelete: '\u786e\u5b9a\u5220\u9664\u8fd9\u6761\u4ea4\u6613\u5417\uff1f\u5220\u9664\u540e\u65e0\u6cd5\u6062\u590d\u3002',
     footer: '简单记录，安心生活', overviewHint: '快速了解本月收支', transactionsCount: '笔记录'
   }
 };

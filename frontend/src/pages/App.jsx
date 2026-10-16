@@ -227,7 +227,7 @@ export function App() {
           ) : page === 'activity' ? (
             <section className="page-section">
               <PageTitle title={t('activity')} detail={t('activityHint')} />
-              <TransactionPanel items={monthTransactions} categories={workspace.categories} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
+              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
             </section>
           ) : (
             <>
@@ -250,7 +250,7 @@ export function App() {
               </section>
 
               {selectedAccount && <TrendChart account={selectedAccount} points={trend} t={t} locale={language === 'zh' ? 'zh-CN' : 'en-US'} />}
-              <TransactionPanel items={monthTransactions} categories={workspace.categories} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
+              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
             </>
           )}
         </main>
@@ -332,32 +332,35 @@ function AccountForm({ t, onCancel, onSubmit }) {
   );
 }
 
-function TransactionPanel({ items, categories, t, language, onDelete, onAdd, account }) {
+function TransactionPanel({ items, categories, accounts, t, language, onDelete, onAdd, account }) {
   return (
     <section className="panel transaction-panel">
       <div className="panel-heading">
         <div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div>
         <div className="panel-actions"><span className="count-pill">{items.length} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
       </div>
-      {items.length ? <TransactionList items={items} categories={categories} t={t} language={language} onDelete={onDelete} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{account ? t('empty') : t('chooseAccountFirst')}</p></div>}
+      {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} onDelete={onDelete} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{account ? t('empty') : t('chooseAccountFirst')}</p></div>}
     </section>
   );
 }
 
 function TransactionForm({ account, categories, t, onSubmit, onCancel, onCreateAccount }) {
   const [type, setType] = useState('expense');
+  const [categoryId, setCategoryId] = useState('');
   const [error, setError] = useState('');
   const choices = categories.filter((item) => item.type === type && !item.archived);
+  const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
   function submit(event) {
     event.preventDefault();
     if (!account) return;
     const form = new FormData(event.currentTarget);
     const amount = String(form.get('amount')).trim();
     if (!moneyToCents(amount) || moneyToCents(amount) <= 0n) return setError(t('fieldRequired'));
+    if (!selectedCategoryId) return setError(t('fieldRequired'));
     setError('');
     onSubmit({
       id: crypto.randomUUID(), type, amount: centsToAmount(moneyToCents(amount)), currency: account.currency,
-      accountId: account.id, categoryId: String(form.get('categoryId')),
+      accountId: account.id, categoryId: selectedCategoryId,
       transactionDate: String(form.get('transactionDate')), note: String(form.get('note') ?? '').trim()
     });
     event.currentTarget.reset();
@@ -368,9 +371,11 @@ function TransactionForm({ account, categories, t, onSubmit, onCancel, onCreateA
       {!account ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></div> : <>
         <div className="editing-account"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>{account.currency}</small></div></div>
         <form onSubmit={submit}>
-          <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => setType('expense')}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => setType('income')}>{t('incomeType')}</button></div></label>
+          <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); }}>{t('incomeType')}</button></div></label>
           <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
-          <label className="field"><span>{t('category')}</span><select name="categoryId" required>{choices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <div className="field"><span>{t('category')}</span><div className="category-chip-list" role="group" aria-label={t('category')}>
+            {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
+          </div></div>
           <label className="field"><span>{t('date')}</span><input name="transactionDate" type="date" defaultValue={today()} required /></label>
           <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" /></label>
           {error && <div className="inline-error">{error}</div>}
@@ -381,18 +386,36 @@ function TransactionForm({ account, categories, t, onSubmit, onCancel, onCreateA
   );
 }
 
-function TransactionList({ items, categories, t, language, onDelete }) {
+function TransactionList({ items, categories, accounts = [], t, language, onDelete }) {
   const categoryMap = new Map(categories.map((item) => [item.id, item.name]));
+  const accountMap = new Map(accounts.map((item) => [item.id, item.name]));
+  const groups = items.reduce((result, item) => {
+    const last = result[result.length - 1];
+    if (last?.date === item.transactionDate) last.items.push(item);
+    else result.push({ date: item.transactionDate, items: [item] });
+    return result;
+  }, []);
+  const locale = language === 'zh' ? 'zh-CN' : 'en-US';
+  const formatGroupDate = (date) => new Intl.DateTimeFormat(locale, {
+    weekday: 'long', month: 'short', day: 'numeric'
+  }).format(new Date(`${date}T12:00:00`));
   return (
     <div className="transaction-list">
-      {items.map((item) => (
-        <article className="transaction-row" key={item.id}>
-          <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '?' : '?'}</span>
-          <div className="transaction-info"><strong>{item.note || categoryMap.get(item.categoryId) || '?'}</strong><span>{categoryMap.get(item.categoryId) || '?'} ? {item.transactionDate}</span></div>
-          <strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '?'}{formatCents(moneyToCents(item.amount) ?? 0n, language === 'zh' ? 'zh-CN' : 'en-US', item.currency)}</strong>
-          <button className="icon-button" onClick={() => onDelete(item.id)} aria-label={t('delete')} title={t('delete')}>?</button>
-        </article>
-      ))}
+      {groups.map((group) => <section className="transaction-date-group" key={group.date}>
+        <h3>{formatGroupDate(group.date)}</h3>
+        {group.items.map((item) => <article className="transaction-row" key={item.id}>
+          <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}</span>
+          <div className="transaction-info">
+            <strong>{item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong>
+            <div className="transaction-meta-tags">
+              {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
+              <span className="transaction-tag">{categoryMap.get(item.categoryId) || '\u2014'}</span>
+            </div>
+          </div>
+          <strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>
+          <button className="icon-button" onClick={() => { if (window.confirm(t('confirmDelete'))) onDelete(item.id); }} aria-label={t('delete')} title={t('delete')}>x</button>
+        </article>)}
+      </section>)}
     </div>
   );
 }
