@@ -14,6 +14,31 @@ const today = () => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
+function recentFiveDays() {
+  const center = new Date(`${today()}T12:00:00`);
+  return Array.from({ length: 5 }, (_, index) => {
+    const date = new Date(center);
+    date.setDate(center.getDate() + index - 2);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  });
+}
+
+function makeTrend(account, transactions, language) {
+  const days = recentFiveDays();
+  const totals = new Map(days.map((day) => [day, { income: 0n, expense: 0n }]));
+  for (const item of transactions) {
+    const daily = totals.get(item.transactionDate);
+    if (!daily || item.accountId !== account?.id) continue;
+    daily[item.type] += moneyToCents(item.amount) ?? 0n;
+  }
+  return days.map((date) => ({
+    date,
+    label: new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit' }).format(new Date(`${date}T12:00:00`)),
+    income: totals.get(date).income,
+    expense: totals.get(date).expense
+  }));
+}
+
 function centsToAmount(cents) {
   return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
 }
@@ -27,6 +52,8 @@ export function App() {
   const [workspace, setWorkspace] = useState(emptyWorkspace());
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [migration, setMigration] = useState(null);
+  const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [rightEditor, setRightEditor] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [month, setMonth] = useState(today().slice(0, 7));
   const t = (key) => translate(language, key);
@@ -76,19 +103,16 @@ export function App() {
     return () => clearTimeout(timer);
   }, [workspace, role, workspaceReady]);
 
-  const monthTransactions = useMemo(
-    () => workspace.transactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate)),
-    [workspace.transactions, month]
-  );
-  const monthTotals = useMemo(() => {
-    return monthTransactions.reduce((totals, item) => {
-      const cents = moneyToCents(item.amount) ?? 0n;
-      if (item.type === 'income') totals.income += cents;
-      else totals.expense += cents;
-      return totals;
-    }, { income: 0n, expense: 0n });
-  }, [monthTransactions]);
-  const currency = user?.baseCurrency ?? 'USD';
+  useEffect(() => {
+    if (!workspace.accounts.length) setSelectedAccountId(null);
+    else if (!workspace.accounts.some((account) => account.id === selectedAccountId)) setSelectedAccountId(workspace.accounts[0].id);
+  }, [workspace.accounts, selectedAccountId]);
+
+  const selectedAccount = workspace.accounts.find((account) => account.id === selectedAccountId) ?? null;
+  const accountTransactions = selectedAccount ? workspace.transactions.filter((item) => item.accountId === selectedAccount.id) : [];
+  const monthTransactions = accountTransactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
+  const trend = useMemo(() => makeTrend(selectedAccount, accountTransactions, language), [selectedAccount, accountTransactions, language]);
+  const currency = selectedAccount?.currency ?? user?.baseCurrency ?? 'USD';
 
   async function onAuthenticated(account) {
     const local = role === 'anonymous' ? workspace : emptyWorkspace();
@@ -109,6 +133,7 @@ export function App() {
     if (!migration) return;
     const result = choice === 'merge'
       ? await saveServerWorkspace({
+          accounts: mergeById(migration.remote.accounts, migration.local.accounts),
           categories: mergeById(migration.remote.categories, migration.local.categories),
           transactions: mergeById(migration.remote.transactions, migration.local.transactions),
           budgets: mergeById(migration.remote.budgets, migration.local.budgets),
@@ -140,6 +165,16 @@ export function App() {
     setWorkspace((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }));
   }
 
+  function addAccount(account) {
+    setWorkspace((current) => ({ ...current, accounts: [...current.accounts, account] }));
+    setSelectedAccountId(account.id);
+    setRightEditor(null);
+  }
+
+  function openTransactionEditor() {
+    setRightEditor('transaction');
+  }
+
   const saveLabel = saveStatus === 'failed' ? t('saveFailed') : saveStatus === 'saved' ? t('saved') : '…';
 
   return (
@@ -169,9 +204,11 @@ export function App() {
         <aside className="left-rail">
           <div className="rail-label">{t('overviewHint')}</div>
           <nav className="primary-nav" aria-label={t('overview')}>
-            <button className={page === 'overview' ? 'selected' : ''} onClick={() => setPage('overview')}><span>◫</span>{t('overview')}</button>
+            <button className={page === 'overview' ? 'selected' : ''} onClick={() => setPage('overview')}><span>⌂</span>{t('home')}</button>
             <button className={page === 'activity' ? 'selected' : ''} onClick={() => setPage('activity')}><span>↗</span>{t('activity')}</button>
+            <button className={page === 'budgets' ? 'selected' : ''} onClick={() => setPage('budgets')}><span>◷</span>{t('budgets')}</button>
             <button className={page === 'profile' ? 'selected' : ''} onClick={() => setPage('profile')}><span>○</span>{t('profile')}</button>
+            <button className={page === 'settings' ? 'selected' : ''} onClick={() => setPage('settings')}><span>⚙</span>{t('settings')}</button>
           </nav>
           <div className="rail-bottom">
             <span className="tiny-label">{t('account')}</span>
@@ -183,44 +220,62 @@ export function App() {
         <main className="main-content">
           {page === 'profile' ? (
             <ProfilePage user={user} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
+          ) : page === 'settings' ? (
+            <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} />
+          ) : page === 'budgets' ? (
+            <PlaceholderPage title={t('budgets')} detail={t('comingSoon')} />
+          ) : page === 'activity' ? (
+            <section className="page-section">
+              <PageTitle title={t('activity')} detail={t('activityHint')} />
+              <TransactionPanel items={monthTransactions} categories={workspace.categories} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
+            </section>
           ) : (
             <>
               <section className="page-heading">
-                <div><div className="eyebrow">{t(page === 'activity' ? 'activity' : 'brand')}</div><h1>{t('title')}</h1><p>{t('subtitle')}</p></div>
+                <div><div className="eyebrow">{t('brand')}</div><h1>{t('title')}</h1><p>{t('subtitle')}</p></div>
                 <label className="month-control"><span>{t('month')}</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
               </section>
 
-              <section className="summary-grid" aria-label={t('overviewHint')}>
-                <SummaryCard label={t('income')} value={formatCents(monthTotals.income, language === 'zh' ? 'zh-CN' : 'en-US', currency)} tone="positive" />
-                <SummaryCard label={t('expense')} value={formatCents(monthTotals.expense, language === 'zh' ? 'zh-CN' : 'en-US', currency)} tone="neutral" />
-                <SummaryCard label={t('balance')} value={formatCents(monthTotals.income - monthTotals.expense, language === 'zh' ? 'zh-CN' : 'en-US', currency)} tone="balance" />
+              <section className="account-section" aria-label={t('accounts')}>
+                <div className="section-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t('accountOverview')}</h2></div>
+                  {workspace.accounts.length > 0 && <button className="add-account-link" onClick={() => setRightEditor('account')}><span>+</span>{t('addAccount')}</button>}
+                </div>
+                {workspace.accounts.length ? (
+                  <div className="summary-grid account-scroller">
+                    {workspace.accounts.map((account) => <AccountCard key={account.id} account={account} selected={account.id === selectedAccountId} transactions={workspace.transactions} locale={language === 'zh' ? 'zh-CN' : 'en-US'} onSelect={() => setSelectedAccountId(account.id)} />)}
+                  </div>
+                ) : (
+                  <div className="account-empty"><p>{t('noAccounts')}</p><button className="primary-button first-account-button" onClick={() => setRightEditor('account')}><span className="large-plus">+</span>{t('createFirstAccount')}</button></div>
+                )}
               </section>
 
-              <div className="content-columns">
-                <section className="panel transaction-panel">
-                  <div className="panel-heading"><div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div><span className="count-pill">{monthTransactions.length} {t('transactionsCount')}</span></div>
-                  {monthTransactions.length ? <TransactionList items={monthTransactions} categories={workspace.categories} t={t} language={language} onDelete={deleteTransaction} /> : <div className="empty-state"><span className="empty-icon">↗</span><p>{t('empty')}</p></div>}
-                </section>
-                <TransactionForm categories={workspace.categories} currency={currency} t={t} onSubmit={addTransaction} />
-              </div>
+              {selectedAccount && <TrendChart account={selectedAccount} points={trend} t={t} locale={language === 'zh' ? 'zh-CN' : 'en-US'} />}
+              <TransactionPanel items={monthTransactions} categories={workspace.categories} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
             </>
           )}
         </main>
 
-        <aside className="right-rail">
-          <div className="right-card account-card">
-            <div className="mini-icon">✳</div>
-            <div className="eyebrow">{t('account')}</div>
-            <h3>{user ? user.email : t('anonymous')}</h3>
-            <p>{user ? t('roleUser') : t('localNote')}</p>
-            <button className="subtle-button" onClick={() => setPage('profile')}>{user ? t('profile') : t('signIn')} <span>→</span></button>
-          </div>
-          <div className="right-card note-card">
-            <span className="tiny-label">{t('month')}</span>
-            <strong>{month}</strong>
-            <p>{t('overviewHint')}</p>
-          </div>
-          {user && <div className={`sync-label ${saveStatus}`}>{saveLabel}</div>}
+        <aside className={`right-rail ${rightEditor ? 'editing' : ''}`}>
+          {rightEditor === 'account' ? (
+            <AccountForm t={t} onCancel={() => setRightEditor(null)} onSubmit={addAccount} />
+          ) : rightEditor === 'transaction' ? (
+            <TransactionForm account={selectedAccount} categories={workspace.categories} t={t} onCancel={() => setRightEditor(null)} onSubmit={(transaction) => { addTransaction(transaction); setRightEditor(null); }} onCreateAccount={() => setRightEditor('account')} />
+          ) : (
+            <>
+              <div className="right-card account-card">
+                <div className="mini-icon">?</div>
+                <div className="eyebrow">{t('account')}</div>
+                <h3>{user ? user.email : t('anonymous')}</h3>
+                <p>{user ? t('roleUser') : t('localNote')}</p>
+                <button className="subtle-button" onClick={() => setPage('profile')}>{user ? t('profile') : t('signIn')} <span>?</span></button>
+              </div>
+              <div className="right-card note-card">
+                <span className="tiny-label">{t('month')}</span><strong>{month}</strong><p>{t('overviewHint')}</p>
+              </div>
+              {selectedAccount && <div className="right-card balance-note"><span className="tiny-label">{t('selectedAccount')}</span><strong>{selectedAccount.name}</strong><p>{selectedAccount.currency}</p></div>}
+              {user && <div className={`sync-label ${saveStatus}`}>{saveLabel}</div>}
+            </>
+          )}
         </aside>
       </div>
 
@@ -235,42 +290,93 @@ function mergeById(remote = [], local = []) {
   return [...merged.values()];
 }
 
-function SummaryCard({ label, value, tone }) {
-  return <article className={`summary-card ${tone}`}><span>{label}</span><strong>{value}</strong><i /></article>;
+function AccountCard({ account, selected, transactions, locale, onSelect }) {
+  const balance = transactions.filter((item) => item.accountId === account.id).reduce((sum, item) => {
+    const cents = moneyToCents(item.amount) ?? 0n;
+    return sum + (item.type === 'income' ? cents : -cents);
+  }, moneyToCents(account.openingBalance) ?? 0n);
+  return (
+    <button className={`account-card-option ${selected ? 'selected' : ''}`} onClick={onSelect}>
+      <span className="account-card-top"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><span className="account-currency">{account.currency}</span></span>
+      <span className="account-name">{account.name}</span>
+      <strong>{formatCents(balance, locale, account.currency)}</strong>
+    </button>
+  );
 }
 
-function TransactionForm({ categories, currency, t, onSubmit }) {
+function AccountForm({ t, onCancel, onSubmit }) {
+  const [currency, setCurrency] = useState('USD');
+  const [error, setError] = useState('');
+  function submit(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get('name')).trim();
+    const openingBalance = String(form.get('openingBalance')).trim() || '0.00';
+    if (!name || moneyToCents(openingBalance) === null) return setError(t('fieldRequired'));
+    setError('');
+    onSubmit({ id: crypto.randomUUID(), name, currency, openingBalance: centsToAmount(moneyToCents(openingBalance)) });
+  }
+  return (
+    <section className="panel side-editor">
+      <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t('addAccount')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
+      <p className="editor-copy">{t('accountSetupHint')}</p>
+      <form onSubmit={submit}>
+        <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" autoFocus required /></label>
+        <label className="field"><span>{t('openingBalance')}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></label>
+        <label className="field"><span>{t('currency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label>
+        {error && <div className="inline-error">{error}</div>}
+        <button className="primary-button" type="submit">{t('saveAccount')} <span>+</span></button>
+        <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
+      </form>
+    </section>
+  );
+}
+
+function TransactionPanel({ items, categories, t, language, onDelete, onAdd, account }) {
+  return (
+    <section className="panel transaction-panel">
+      <div className="panel-heading">
+        <div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div>
+        <div className="panel-actions"><span className="count-pill">{items.length} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
+      </div>
+      {items.length ? <TransactionList items={items} categories={categories} t={t} language={language} onDelete={onDelete} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{account ? t('empty') : t('chooseAccountFirst')}</p></div>}
+    </section>
+  );
+}
+
+function TransactionForm({ account, categories, t, onSubmit, onCancel, onCreateAccount }) {
   const [type, setType] = useState('expense');
-  const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [error, setError] = useState('');
   const choices = categories.filter((item) => item.type === type && !item.archived);
   function submit(event) {
     event.preventDefault();
+    if (!account) return;
     const form = new FormData(event.currentTarget);
     const amount = String(form.get('amount')).trim();
     if (!moneyToCents(amount) || moneyToCents(amount) <= 0n) return setError(t('fieldRequired'));
     setError('');
     onSubmit({
-      id: crypto.randomUUID(), type, amount: centsToAmount(moneyToCents(amount)),
-      currency: selectedCurrency, categoryId: String(form.get('categoryId')),
+      id: crypto.randomUUID(), type, amount: centsToAmount(moneyToCents(amount)), currency: account.currency,
+      accountId: account.id, categoryId: String(form.get('categoryId')),
       transactionDate: String(form.get('transactionDate')), note: String(form.get('note') ?? '').trim()
     });
     event.currentTarget.reset();
-    const dateInput = event.currentTarget.elements.transactionDate;
-    if (dateInput) dateInput.value = today();
   }
   return (
-    <section className="panel form-panel">
-      <div className="panel-heading"><div><div className="eyebrow">{t('newTransaction')}</div><h2>{t('newTransaction')}</h2></div><span className="form-plus">＋</span></div>
-      <form onSubmit={submit}>
-        <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => setType('expense')}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => setType('income')}>{t('incomeType')}</button></div></label>
-        <label className="field"><span>{t('amount')}</span><div className="amount-control"><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required /><select aria-label={t('currency')} value={selectedCurrency} onChange={(event) => setSelectedCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></div></label>
-        <label className="field"><span>{t('category')}</span><select name="categoryId" required>{choices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label className="field"><span>{t('date')}</span><input name="transactionDate" type="date" defaultValue={today()} required /></label>
-        <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" /></label>
-        {error && <div className="inline-error">{error}</div>}
-        <button className="primary-button" type="submit">{t('save')} <span>→</span></button>
-      </form>
+    <section className="panel side-editor">
+      <div className="editor-heading"><div><div className="eyebrow">{t('activity')}</div><h2>{t('newTransaction')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
+      {!account ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></div> : <>
+        <div className="editing-account"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>{account.currency}</small></div></div>
+        <form onSubmit={submit}>
+          <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => setType('expense')}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => setType('income')}>{t('incomeType')}</button></div></label>
+          <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+          <label className="field"><span>{t('category')}</span><select name="categoryId" required>{choices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="field"><span>{t('date')}</span><input name="transactionDate" type="date" defaultValue={today()} required /></label>
+          <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" /></label>
+          {error && <div className="inline-error">{error}</div>}
+          <button className="primary-button" type="submit">{t('save')} <span>+</span></button>
+        </form>
+      </>}
     </section>
   );
 }
@@ -281,14 +387,70 @@ function TransactionList({ items, categories, t, language, onDelete }) {
     <div className="transaction-list">
       {items.map((item) => (
         <article className="transaction-row" key={item.id}>
-          <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '↙' : '↗'}</span>
-          <div className="transaction-info"><strong>{item.note || categoryMap.get(item.categoryId) || '—'}</strong><span>{categoryMap.get(item.categoryId) || '—'} · {item.transactionDate}</span></div>
-          <strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '−'}{formatCents(moneyToCents(item.amount) ?? 0n, language === 'zh' ? 'zh-CN' : 'en-US', item.currency)}</strong>
-          <button className="icon-button" onClick={() => onDelete(item.id)} aria-label={t('delete')} title={t('delete')}>×</button>
+          <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '?' : '?'}</span>
+          <div className="transaction-info"><strong>{item.note || categoryMap.get(item.categoryId) || '?'}</strong><span>{categoryMap.get(item.categoryId) || '?'} ? {item.transactionDate}</span></div>
+          <strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '?'}{formatCents(moneyToCents(item.amount) ?? 0n, language === 'zh' ? 'zh-CN' : 'en-US', item.currency)}</strong>
+          <button className="icon-button" onClick={() => onDelete(item.id)} aria-label={t('delete')} title={t('delete')}>?</button>
         </article>
       ))}
     </div>
   );
+}
+
+function TrendChart({ account, points, t, locale }) {
+  const width = 700;
+  const height = 250;
+  const left = 72;
+  const right = 20;
+  const top = 20;
+  const bottom = 42;
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
+  const max = Math.max(1, ...points.flatMap((item) => [Number(item.income), Number(item.expense)]));
+  const x = (index) => left + index * (chartWidth / (points.length - 1));
+  const y = (amount) => top + chartHeight - (Number(amount) / max) * chartHeight;
+  const incomePoints = points.map((item, index) => `${x(index)},${y(item.income)}`).join(' ');
+  const expensePoints = points.map((item, index) => `${x(index)},${y(item.expense)}`).join(' ');
+  const ticks = [0, max / 2, max];
+  const formatTick = (cents) => formatCents(BigInt(Math.round(cents)), locale, account.currency);
+  return (
+    <section className="panel trend-panel">
+      <div className="panel-heading"><div><div className="eyebrow">{t('fiveDayTrend')}</div><h2>{account.name}</h2></div><span className="trend-currency">{account.currency}</span></div>
+      <div className="chart-legend"><span><i className="legend-income" />{t('income')}</span><span><i className="legend-expense" />{t('expense')}</span></div>
+      <div className="chart-scroll">
+        <svg className="trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t('fiveDayTrend')}>
+          {ticks.map((tick, index) => {
+            const yy = y(BigInt(Math.round(tick)));
+            return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} className="chart-gridline" /><text x={left - 9} y={yy + 4} textAnchor="end" className="chart-axis-label">{formatTick(tick)}</text></g>;
+          })}
+          <polyline points={incomePoints} className="chart-line income-line" />
+          <polyline points={expensePoints} className="chart-line expense-line" />
+          {points.map((point, index) => <g key={point.date}>
+            <circle cx={x(index)} cy={y(point.income)} r="4" className="chart-point income-point" />
+            <circle cx={x(index)} cy={y(point.expense)} r="4" className="chart-point expense-point" />
+            <text x={x(index)} y={height - 12} textAnchor="middle" className="chart-axis-label">{point.label}</text>
+          </g>)}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+function PageTitle({ title, detail }) {
+  return <header className="page-heading"><div><div className="eyebrow">MINT FINANCE</div><h1>{title}</h1><p>{detail}</p></div></header>;
+}
+
+function PlaceholderPage({ title, detail }) {
+  return <section className="page-section"><PageTitle title={title} detail={detail} /><div className="panel placeholder-panel"><span className="empty-icon">?</span><p>{detail}</p></div></section>;
+}
+
+function SettingsPage({ t, language, setLanguage, theme, setTheme }) {
+  return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
+    <div className="panel settings-panel">
+      <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh">??</option><option value="en">English</option></select></label>
+      <label className="settings-row"><span><strong>{t('theme')}</strong><small>{t('themeHint')}</small></span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></select></label>
+    </div>
+  </section>;
 }
 
 function ProfilePage({ user, t, onAuthenticated, onSignOut, migration, onMigration }) {

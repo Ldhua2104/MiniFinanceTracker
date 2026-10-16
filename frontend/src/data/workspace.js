@@ -3,12 +3,13 @@ import { apiRequest } from '../api/client.js';
 const STORAGE_KEY = 'mini-finance.anonymous-workspace.v1';
 
 export function emptyWorkspace() {
-  return { categories: [], transactions: [], budgets: [], revision: 0 };
+  return { accounts: [], categories: [], transactions: [], budgets: [], revision: 0 };
 }
 
 export function makeStarterWorkspace() {
   const id = () => crypto.randomUUID();
   return {
+    accounts: [],
     categories: [
       { id: id(), name: 'Salary', type: 'income', archived: false },
       { id: id(), name: 'Food', type: 'expense', archived: false },
@@ -23,8 +24,12 @@ export function makeStarterWorkspace() {
 }
 
 export function ensureStarterCategories(workspace) {
-  if (workspace.categories?.length) return workspace;
-  return { ...workspace, categories: makeStarterWorkspace().categories };
+  return {
+    ...emptyWorkspace(),
+    ...workspace,
+    accounts: workspace.accounts ?? [],
+    categories: workspace.categories?.length ? workspace.categories : makeStarterWorkspace().categories
+  };
 }
 
 export function loadAnonymousWorkspace() {
@@ -58,6 +63,7 @@ export function mergeWorkspaces(serverData, localData) {
     return [...result.values()];
   };
   return {
+    accounts: mergeById(serverData.accounts, localData.accounts),
     categories: mergeById(serverData.categories, localData.categories),
     transactions: mergeById(serverData.transactions, localData.transactions),
     budgets: mergeById(serverData.budgets, localData.budgets),
@@ -74,6 +80,7 @@ export async function saveServerWorkspace(workspace) {
   const response = await apiRequest('/auth/workspace', {
     method: 'PUT',
     body: JSON.stringify({
+      accounts: workspace.accounts ?? [],
       categories: workspace.categories,
       transactions: workspace.transactions,
       budgets: workspace.budgets
@@ -89,6 +96,15 @@ export function moneyToCents(value) {
 }
 
 export function formatCents(cents, locale, currency) {
-  const value = Number(cents) / 100;
-  return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2 }).format(value);
+  const negative = cents < 0n;
+  const absolute = negative ? -cents : cents;
+  const whole = absolute / 100n;
+  const fraction = String(absolute % 100n).padStart(2, '0');
+  const formatter = new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const parts = formatter.formatToParts(negative ? (whole === 0n ? -1n : -whole) : whole);
+  return parts.map((part) => {
+    if (part.type === 'fraction') return fraction;
+    if (negative && whole === 0n && part.type === 'integer') return '0';
+    return part.value;
+  }).join('');
 }

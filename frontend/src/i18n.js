@@ -1,5 +1,11 @@
 const messages = {
   en: {
+    home: 'Home', budgets: 'Budgets', settings: 'Settings', accounts: 'Accounts', accountOverview: 'Your accounts',
+    addAccount: 'Add account', noAccounts: 'Add an account to start organizing your money.', createFirstAccount: 'Create your first account',
+    fiveDayTrend: 'Five-day cash flow', selectedAccount: 'Selected account', accountSetupHint: 'Set a name, opening amount and currency for this account.',
+    accountName: 'Account name', openingBalance: 'Opening amount', saveAccount: 'Save account', cancel: 'Cancel', close: 'Close',
+    chooseAccountFirst: 'Create or select an account before adding a transaction.', activityHint: 'Review this month’s activity for the selected account.',
+    comingSoon: 'This section is ready for a future update.', settingsHint: 'Choose how Mint Finance looks and reads.', languageHint: 'Select the interface language.', themeHint: 'Choose a light or dark appearance.',
     brand: 'MINT FINANCE', title: 'Personal finance, in clear view.', subtitle: 'A quiet space to understand your spending and stay close to your plans.',
     overview: 'Overview', activity: 'Activity', profile: 'Profile', month: 'Month', income: 'Income', expense: 'Spending', balance: 'Net balance',
     newTransaction: 'Add transaction', type: 'Type', category: 'Category', amount: 'Amount', date: 'Date', note: 'Note', save: 'Save transaction',
@@ -16,6 +22,12 @@ const messages = {
     footer: 'Personal finance, kept simple', overviewHint: 'Your monthly picture at a glance', transactionsCount: 'transactions'
   },
   zh: {
+    home: '首页', budgets: '预算', settings: '设置', accounts: '账户', accountOverview: '账户总览',
+    addAccount: '添加账户', noAccounts: '添加账户，开始整理收支。', createFirstAccount: '创建第一个账户',
+    fiveDayTrend: '近五日收支', selectedAccount: '当前账户', accountSetupHint: '为账户设置名称、初始金额和币种。',
+    accountName: '账户名称', openingBalance: '初始金额', saveAccount: '保存账户', cancel: '取消', close: '关闭',
+    chooseAccountFirst: '请先创建或选择账户，再添加交易。', activityHint: '查看当前账户本月收支记录。',
+    comingSoon: '此页面将在后续版本开放。', settingsHint: '设置 Mint Finance 的显示方式。', languageHint: '选择界面语言。', themeHint: '选择浅色或深色外观。',
     brand: 'MINT FINANCE', title: '收支清晰，心里有数。', subtitle: '用一处安静、简单的空间，了解日常支出并照顾好计划。',
     overview: '概览', activity: '收支记录', profile: '个人资料', month: '月份', income: '收入', expense: '支出', balance: '收支结余',
     newTransaction: '添加一笔收支', type: '类型', category: '分类', amount: '金额', date: '日期', note: '备注', save: '保存记录',

@@ -9,6 +9,13 @@ const categorySchema = new mongoose.Schema({
   archived: { type: Boolean, default: false }
 }, { _id: false, strict: 'throw' });
 
+const accountSchema = new mongoose.Schema({
+  id: { type: String, required: true, maxlength: 80 },
+  name: { type: String, required: true, trim: true, maxlength: 60 },
+  currency: { type: String, enum: CURRENCIES, required: true },
+  openingBalance: { type: String, required: true, match: /^\d{1,16}(?:\.\d{1,2})?$/ }
+}, { _id: false, strict: 'throw' });
+
 const transactionSchema = new mongoose.Schema({
   id: { type: String, required: true, maxlength: 80 },
   type: { type: String, enum: TRANSACTION_TYPES, required: true },
@@ -16,7 +23,8 @@ const transactionSchema = new mongoose.Schema({
   currency: { type: String, enum: CURRENCIES, required: true },
   categoryId: { type: String, required: true, maxlength: 80 },
   transactionDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
-  note: { type: String, default: '', maxlength: 500 }
+  note: { type: String, default: '', maxlength: 500 },
+  accountId: { type: String, default: null, maxlength: 80 }
 }, { _id: false, strict: 'throw' });
 
 const budgetSchema = new mongoose.Schema({
@@ -29,6 +37,7 @@ const budgetSchema = new mongoose.Schema({
 
 const workspaceSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  accounts: { type: [accountSchema], default: [] },
   categories: { type: [categorySchema], default: [] },
   transactions: { type: [transactionSchema], default: [] },
   budgets: { type: [budgetSchema], default: [] },

@@ -31,7 +31,7 @@ const definitions = [
     userId: { bsonType: 'objectId' }, codeHash: { bsonType: 'string' }, expiresAt: { bsonType: 'date' }, attempts: { bsonType: 'int', minimum: 0, maximum: 5 }, consumedAt: { bsonType: ['date', 'null'] }
   } }],
   [Workspace, { bsonType: 'object', required: ['userId'], properties: {
-    userId: { bsonType: 'objectId' }, categories: { bsonType: 'array' }, transactions: { bsonType: 'array' }, budgets: { bsonType: 'array' }, revision: { bsonType: ['int', 'long'], minimum: 0 }
+    userId: { bsonType: 'objectId' }, accounts: { bsonType: 'array' }, categories: { bsonType: 'array' }, transactions: { bsonType: 'array' }, budgets: { bsonType: 'array' }, revision: { bsonType: ['int', 'long'], minimum: 0 }
   } }]
 ];
 

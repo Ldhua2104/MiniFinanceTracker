@@ -16,6 +16,10 @@ const loginInput = z.object({
 }).strict();
 
 const workspaceInput = z.object({
+  accounts: z.array(z.object({
+    id: z.string().min(1).max(80), name: z.string().trim().min(1).max(60),
+    currency: z.enum(CURRENCIES), openingBalance: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/)
+  }).strict()).max(100),
   categories: z.array(z.object({
     id: z.string().min(1).max(80), name: z.string().trim().min(1).max(50),
     type: z.enum(['income', 'expense']), archived: z.boolean().default(false)
@@ -24,14 +28,35 @@ const workspaceInput = z.object({
     id: z.string().min(1).max(80), type: z.enum(['income', 'expense']),
     amount: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/).refine((value) => new Decimal(value).gt(0)), currency: z.enum(CURRENCIES),
     categoryId: z.string().min(1).max(80), transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    note: z.string().max(500).default('')
+    note: z.string().max(500).default(''), accountId: z.string().min(1).max(80).nullable().optional()
   }).strict()).max(10000),
   budgets: z.array(z.object({
     id: z.string().min(1).max(80), categoryId: z.string().min(1).max(80),
     month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
     amount: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/).refine((value) => new Decimal(value).gt(0)), currency: z.enum(CURRENCIES)
   }).strict()).max(1000)
-}).strict();
+}).strict().superRefine((workspace, context) => {
+  const checkUnique = (items, label) => {
+    const seen = new Set();
+    items.forEach((item, index) => {
+      if (seen.has(item.id)) context.addIssue({ code: 'custom', path: [label, index, 'id'], message: 'Ids must be unique' });
+      seen.add(item.id);
+    });
+  };
+  checkUnique(workspace.accounts, 'accounts');
+  checkUnique(workspace.categories, 'categories');
+  checkUnique(workspace.transactions, 'transactions');
+  checkUnique(workspace.budgets, 'budgets');
+  const accountIds = new Set(workspace.accounts.map((account) => account.id));
+  const categoryIds = new Set(workspace.categories.map((category) => category.id));
+  workspace.transactions.forEach((transaction, index) => {
+    if (transaction.accountId && !accountIds.has(transaction.accountId)) context.addIssue({ code: 'custom', path: ['transactions', index, 'accountId'], message: 'Account does not exist in this workspace' });
+    if (!categoryIds.has(transaction.categoryId)) context.addIssue({ code: 'custom', path: ['transactions', index, 'categoryId'], message: 'Category does not exist in this workspace' });
+  });
+  workspace.budgets.forEach((budget, index) => {
+    if (!categoryIds.has(budget.categoryId)) context.addIssue({ code: 'custom', path: ['budgets', index, 'categoryId'], message: 'Category does not exist in this workspace' });
+  });
+});
 
 function publicUser(user) {
   return {
@@ -125,7 +150,7 @@ authRouter.get('/workspace', requireUser, async (req, res, next) => {
   try {
     const workspace = await Workspace.findOne({ userId: req.user._id }).lean();
     res.json({
-      data: workspace ? { categories: workspace.categories, transactions: workspace.transactions, budgets: workspace.budgets, revision: workspace.revision } : { categories: [], transactions: [], budgets: [], revision: 0 },
+      data: workspace ? { accounts: workspace.accounts, categories: workspace.categories, transactions: workspace.transactions, budgets: workspace.budgets, revision: workspace.revision } : { accounts: [], categories: [], transactions: [], budgets: [], revision: 0 },
       meta: { requestId: req.requestId }
     });
   } catch (error) { next(error); }
@@ -139,7 +164,7 @@ authRouter.put('/workspace', requireCsrf, requireUser, async (req, res, next) =>
       { $set: { ...data }, $inc: { revision: 1 } },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     ).lean();
-    res.json({ data: { categories: workspace.categories, transactions: workspace.transactions, budgets: workspace.budgets, revision: workspace.revision }, meta: { requestId: req.requestId } });
+    res.json({ data: { accounts: workspace.accounts, categories: workspace.categories, transactions: workspace.transactions, budgets: workspace.budgets, revision: workspace.revision }, meta: { requestId: req.requestId } });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Workspace data is invalid', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
