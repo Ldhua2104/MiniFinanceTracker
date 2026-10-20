@@ -27,6 +27,8 @@ const messages = {
     loginOrRegister: 'Sign in or create an account', authModalIntro: 'Use your email to sign in or create your account.',
     migrationOption: 'Move local records to your account', migrationOptionHint: 'Transfer anonymous transactions and budgets to your account.',
     migrationComingSoon: 'Local record migration will be available here soon.',
+    profileAccountEditHint: 'Changes are saved to your account on the server.',
+    saveProfile: 'Save profile', profileSaved: 'Profile updated successfully.',
     footer: 'Personal finance, kept simple', overviewHint: 'Your monthly picture at a glance', transactionsCount: 'transactions'
   },
   zh: {
@@ -57,6 +59,8 @@ const messages = {
     loginOrRegister: '\u767b\u5f55\u6216\u521b\u5efa\u8d26\u6237', authModalIntro: '\u4f7f\u7528\u90ae\u7bb1\u767b\u5f55\u6216\u521b\u5efa\u8d26\u6237\u3002',
     migrationOption: '\u5c06\u672c\u5730\u8bb0\u5f55\u8fc1\u79fb\u5230\u8d26\u6237', migrationOptionHint: '\u5c06\u533f\u540d\u4ea4\u6613\u548c\u9884\u7b97\u8f6c\u79fb\u5230\u8d26\u6237\u3002',
     migrationComingSoon: '\u672c\u5730\u8bb0\u5f55\u8fc1\u79fb\u529f\u80fd\u5c06\u5728\u6b64\u5904\u63d0\u4f9b\u3002',
+    profileAccountEditHint: '\u4fee\u6539\u4f1a\u4fdd\u5b58\u5230\u670d\u52a1\u5668\u8d26\u6237\u3002',
+    saveProfile: '\u4fdd\u5b58\u8d44\u6599', profileSaved: '\u4e2a\u4eba\u8d44\u6599\u5df2\u66f4\u65b0\u3002',
     footer: '简单记录，安心生活', overviewHint: '快速了解本月收支', transactionsCount: '笔记录'
   }
 };

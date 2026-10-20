@@ -15,6 +15,11 @@ export const registerInput = z.object({
   timezone: z.string().min(1).max(64).default('UTC')
 }).strict();
 
+export const profileInput = z.object({
+  username: z.string().trim().min(1).max(60),
+  avatar: z.string().max(1_400_000).regex(/^(?:data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2})?$/)
+}).strict();
+
 export const transactionCreateInput = z.object({
   type: z.enum(TRANSACTION_TYPES),
   amount: amountString,

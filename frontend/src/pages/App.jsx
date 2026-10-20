@@ -224,7 +224,7 @@ export function App() {
 
         <main className="main-content">
           {page === 'profile' ? (
-            <ProfilePage user={user} anonymousProfile={anonymousProfile} onAnonymousProfileChange={setAnonymousProfile} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
+            <ProfilePage user={user} anonymousProfile={anonymousProfile} onAnonymousProfileChange={setAnonymousProfile} onUserUpdated={setUser} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
           ) : page === 'settings' ? (
             <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} />
           ) : page === 'budgets' ? (
@@ -492,11 +492,26 @@ function ProfileAvatar({ className, src, name }) {
   return <span className={className} aria-label={name}>{initials}</span>;
 }
 
-function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, t, onAuthenticated, onSignOut, migration, onMigration }) {
+function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, onUserUpdated, t, onAuthenticated, onSignOut, migration, onMigration }) {
   const [mode, setMode] = useState('login');
   const [authOpen, setAuthOpen] = useState(false);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const [profileDraft, setProfileDraft] = useState({ username: user?.username ?? anonymousProfile.username, avatar: user?.avatar ?? anonymousProfile.avatar });
+  const [profileSaved, setProfileSaved] = useState(false);
+
+  useEffect(() => {
+    setProfileDraft({ username: user?.username ?? anonymousProfile.username, avatar: user?.avatar ?? anonymousProfile.avatar });
+  }, [user, anonymousProfile.username, anonymousProfile.avatar]);
+
+  function updateProfileField(key, value) {
+    if (user) {
+      setProfileDraft((current) => ({ ...current, [key]: value }));
+      setProfileSaved(false);
+    } else {
+      onAnonymousProfileChange({ ...anonymousProfile, [key]: value });
+    }
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -538,12 +553,32 @@ function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, t, onAu
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        onAnonymousProfileChange({ ...anonymousProfile, avatar: reader.result });
+        updateProfileField('avatar', reader.result);
         setError('');
       }
     };
     reader.onerror = () => setError(t('avatarTypeError'));
     reader.readAsDataURL(file);
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    if (!profileDraft.username.trim()) return setError(t('fieldRequired'));
+    setWorking(true);
+    setError('');
+    setProfileSaved(false);
+    try {
+      const response = await apiRequest('/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ username: profileDraft.username, avatar: profileDraft.avatar })
+      });
+      onUserUpdated(response.data);
+      setProfileSaved(true);
+    } catch (profileError) {
+      setError(profileError.message || t('saveFailed'));
+    } finally {
+      setWorking(false);
+    }
   }
 
   async function migrate(choice) {
@@ -574,20 +609,20 @@ function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, t, onAu
           <article className="panel profile-card">
             <div className="profile-identity">
               <div className="profile-avatar-wrap">
-                <ProfileAvatar className="profile-avatar-large" src={user?.avatar ?? anonymousProfile.avatar} name={user?.username ?? anonymousProfile.username} />
-                {!user && <label className="avatar-change-button">{t('changeAvatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={changeAvatar} aria-label={t('changeAvatar')} /></label>}
+                <ProfileAvatar className="profile-avatar-large" src={user ? profileDraft.avatar : anonymousProfile.avatar} name={user ? profileDraft.username : anonymousProfile.username} />
+                <label className="avatar-change-button">{t('changeAvatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={changeAvatar} aria-label={t('changeAvatar')} /></label>
               </div>
               <div className="profile-details">
-                {user ? <><h2>{user.username || t('defaultUser')}</h2><p>{user.email}</p><small>{t('roleUser')} ? {user.baseCurrency}</small></> : <>
-                  <label className="field"><span>{t('username')}</span><input type="text" maxLength="60" value={anonymousProfile.username} onChange={(event) => onAnonymousProfileChange({ ...anonymousProfile, username: event.target.value })} /></label>
-                  <p className="profile-hint">{t('profileEditHint')}</p>
-                </>}
+                {user && <><p className="profile-email">{user.email}</p><small>{t('roleUser')} ? {user.baseCurrency}</small></>}
+                <label className="field"><span>{t('username')}</span><input type="text" maxLength="60" value={user ? profileDraft.username : anonymousProfile.username} onChange={(event) => updateProfileField('username', event.target.value)} /></label>
+                <p className="profile-hint">{t(user ? 'profileAccountEditHint' : 'profileEditHint')}</p>
               </div>
             </div>
             {error && !authOpen && <div className="inline-error">{error}</div>}
-            {user ? <button className="secondary-button profile-signout" onClick={onSignOut}>{t('signOut')}</button> : (
+            {user ? <div className="profile-signed-actions"><button className="primary-button" onClick={saveProfile} disabled={working}>{working ? '?' : t('saveProfile')}</button><button className="secondary-button" onClick={onSignOut}>{t('signOut')}</button></div> : (
               <div className="profile-auth-prompt"><p>{t('profileLoginPrompt')}</p><button className="primary-button" onClick={() => openAuth('login')}>{t('loginOrRegister')} <span>?</span></button></div>
             )}
+            {profileSaved && <p className="profile-save-status">{t('profileSaved')}</p>}
           </article>
           {authOpen && <div className="auth-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) setAuthOpen(false); }}>
             <section className="panel auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">

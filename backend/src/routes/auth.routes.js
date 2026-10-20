@@ -4,7 +4,7 @@ import argon2 from 'argon2';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { User, Workspace } from '../models/index.js';
-import { registerInput } from '../domain/validation.js';
+import { profileInput, registerInput } from '../domain/validation.js';
 import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
@@ -130,6 +130,21 @@ authRouter.post('/login', requireCsrf, async (req, res, next) => {
 
 authRouter.get('/me', requireUser, (req, res) => {
   res.json({ data: publicUser(req.user), meta: { requestId: req.requestId } });
+});
+
+authRouter.patch('/profile', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const input = profileInput.parse(req.body);
+    req.user.username = input.username;
+    req.user.avatar = input.avatar;
+    await req.user.save();
+    res.json({ data: publicUser(req.user), meta: { requestId: req.requestId } });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Please check the submitted fields', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
+    }
+    next(error);
+  }
 });
 
 authRouter.post('/logout', requireCsrf, async (req, res, next) => {
