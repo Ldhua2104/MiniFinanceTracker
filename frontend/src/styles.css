@@ -1624,3 +1624,14 @@ h2 {
   .profile-auth-prompt, .migration-option-card { grid-template-columns: 1fr; display: grid; }
   .auth-modal { padding: 20px; }
 }
+
+.category-add-chip { min-width: 32px; padding: 0 9px; border-style: dashed; color: var(--accent-dark); font-size: 16px; line-height: 1; }
+.category-add-form { display: flex; gap: 7px; margin-top: 9px; }
+.category-add-form input { flex: 1; min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 11px; }
+.category-add-form .secondary-button { min-height: 34px; padding: 0 10px; font-size: 10px; }
+.note-image-field { align-items: start; }
+.image-upload-button { position: relative; width: auto; min-height: 34px; justify-self: start; overflow: hidden; font-size: 10px; }
+.image-upload-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.note-image-preview img { display: block; max-width: 100%; max-height: 150px; border: 1px solid var(--line); border-radius: 10px; object-fit: cover; }
+.note-image-preview .text-button { width: auto; margin-top: 3px; color: #b2564e; }
+.transaction-note-image { display: block; max-width: 140px; max-height: 88px; border: 1px solid var(--line); border-radius: 9px; object-fit: cover; }

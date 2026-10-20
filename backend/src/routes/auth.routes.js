@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
@@ -10,6 +13,11 @@ import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
 
 export const authRouter = Router();
+const transactionImageRoot = fileURLToPath(new URL('../../storage/transaction-images/', import.meta.url));
+const transactionImageInput = z.object({
+  image: z.string().max(1_400_000).regex(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/)
+}).strict();
+const transactionImagePath = z.string().max(180).regex(/^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i);
 const loginInput = z.object({
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   password: z.string().min(1).max(128)
@@ -28,7 +36,8 @@ const workspaceInput = z.object({
     id: z.string().min(1).max(80), type: z.enum(['income', 'expense']),
     amount: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/).refine((value) => new Decimal(value).gt(0)), currency: z.enum(CURRENCIES),
     categoryId: z.string().min(1).max(80), transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    note: z.string().max(500).default(''), accountId: z.string().min(1).max(80).nullable().optional()
+    note: z.string().max(500).default(''), noteImage: transactionImagePath.optional().default(''),
+    accountId: z.string().min(1).max(80).nullable().optional()
   }).strict()).max(10000),
   budgets: z.array(z.object({
     id: z.string().min(1).max(80), categoryId: z.string().min(1).max(80),
@@ -81,6 +90,48 @@ authRouter.get('/csrf', (req, res) => {
   const csrfToken = randomBytes(32).toString('hex');
   res.cookie(CSRF_COOKIE, csrfToken, csrfCookieOptions());
   res.json({ data: { csrfToken }, meta: { requestId: req.requestId } });
+});
+
+authRouter.post('/transaction-images', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const { image } = transactionImageInput.parse(req.body);
+    const [, mime, encoded] = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+    const buffer = Buffer.from(encoded, 'base64');
+    if (buffer.length > 1024 * 1024) {
+      return res.status(400).json({ error: { code: 'IMAGE_TOO_LARGE', message: 'Image must be 1 MB or smaller' }, meta: { requestId: req.requestId } });
+    }
+    const validSignature = mime === 'image/png' ? buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      : mime === 'image/jpeg' ? buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255
+      : mime === 'image/gif' ? buffer.subarray(0, 4).toString('ascii') === 'GIF8'
+      : buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+    if (!validSignature) {
+      return res.status(400).json({ error: { code: 'INVALID_IMAGE', message: 'The uploaded file is not a supported image' }, meta: { requestId: req.requestId } });
+    }
+    const extension = mime === 'image/jpeg' ? 'jpg' : mime.slice('image/'.length);
+    const filename = `${randomUUID()}.${extension}`;
+    const userDirectory = path.join(transactionImageRoot, req.user.id);
+    await mkdir(userDirectory, { recursive: true });
+    await writeFile(path.join(userDirectory, filename), buffer, { flag: 'wx' });
+    res.status(201).json({ data: { path: `/api/v1/auth/transaction-images/${filename}` }, meta: { requestId: req.requestId } });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Please choose a supported image', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
+    }
+    next(error);
+  }
+});
+
+authRouter.get('/transaction-images/:filename', requireUser, async (req, res, next) => {
+  if (!/^[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i.test(req.params.filename)) return res.status(404).end();
+  try {
+    const image = await readFile(path.join(transactionImageRoot, req.user.id, req.params.filename));
+    const extension = path.extname(req.params.filename).toLowerCase();
+    const mime = extension === '.jpg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
+    res.set('Cache-Control', 'private, max-age=3600').set('X-Content-Type-Options', 'nosniff').type(mime).send(image);
+  } catch (error) {
+    if (error.code === 'ENOENT') return res.status(404).end();
+    next(error);
+  }
 });
 
 authRouter.post('/register', requireCsrf, async (req, res, next) => {

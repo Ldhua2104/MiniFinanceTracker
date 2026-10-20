@@ -24,6 +24,7 @@ const transactionSchema = new mongoose.Schema({
   categoryId: { type: String, required: true, maxlength: 80 },
   transactionDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   note: { type: String, default: '', maxlength: 500 },
+  noteImage: { type: String, default: '', maxlength: 180, match: /^$|^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i },
   accountId: { type: String, default: null, maxlength: 80 }
 }, { _id: false, strict: 'throw' });
 

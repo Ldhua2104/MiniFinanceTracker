@@ -166,6 +166,12 @@ export function App() {
     setWorkspace((current) => ({ ...current, transactions: [transaction, ...current.transactions] }));
   }
 
+  function addCategory(category) {
+    setWorkspace((current) => current.categories.some((item) => item.id === category.id)
+      ? current
+      : { ...current, categories: [...current.categories, category] });
+  }
+
   function deleteTransaction(id) {
     setWorkspace((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }));
   }
@@ -264,7 +270,7 @@ export function App() {
           {rightEditor === 'account' ? (
             <AccountForm t={t} onCancel={() => setRightEditor(null)} onSubmit={addAccount} />
           ) : rightEditor === 'transaction' ? (
-            <TransactionForm account={selectedAccount} categories={workspace.categories} t={t} onCancel={() => setRightEditor(null)} onSubmit={(transaction) => { addTransaction(transaction); setRightEditor(null); }} onCreateAccount={() => setRightEditor('account')} />
+            <TransactionForm account={selectedAccount} categories={workspace.categories} user={user} t={t} onCancel={() => setRightEditor(null)} onSubmit={(transaction) => { addTransaction(transaction); setRightEditor(null); }} onCreateAccount={() => setRightEditor('account')} onCreateCategory={addCategory} />
           ) : (
             <>
               <div className="right-card account-card">
@@ -349,30 +355,88 @@ function TransactionPanel({ items, categories, accounts, t, language, onDelete, 
   );
 }
 
-function TransactionForm({ account, categories, t, onSubmit, onCancel, onCreateAccount }) {
+function TransactionForm({ account, categories, user, t, onSubmit, onCancel, onCreateAccount, onCreateCategory }) {
   const [type, setType] = useState('expense');
   const [categoryId, setCategoryId] = useState('');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [noteImage, setNoteImage] = useState('');
   const [error, setError] = useState('');
+  const [working, setWorking] = useState(false);
   const choices = categories.filter((item) => item.type === type && !item.archived);
   const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
-  function submit(event) {
+
+  function createCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    const existing = choices.find((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (existing) {
+      setCategoryId(existing.id);
+    } else {
+      const category = { id: crypto.randomUUID(), name, type, archived: false };
+      onCreateCategory(category);
+      setCategoryId(category.id);
+    }
+    setNewCategoryName('');
+    setAddingCategory(false);
+  }
+
+  function chooseNoteImage(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1024 * 1024) {
+      setError(t('imageTypeError'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setNoteImage(reader.result);
+        setError('');
+      }
+    };
+    reader.onerror = () => setError(t('imageTypeError'));
+    reader.readAsDataURL(file);
+  }
+
+  async function submit(event) {
     event.preventDefault();
-    if (!account) return;
-    const form = new FormData(event.currentTarget);
+    if (!account || working) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const amount = String(form.get('amount')).trim();
-    if (!moneyToCents(amount) || moneyToCents(amount) <= 0n) return setError(t('fieldRequired'));
+    const cents = moneyToCents(amount);
+    if (!cents || cents <= 0n) return setError(t('fieldRequired'));
     if (!selectedCategoryId) return setError(t('fieldRequired'));
     setError('');
-    onSubmit({
-      id: crypto.randomUUID(), type, amount: centsToAmount(moneyToCents(amount)), currency: account.currency,
-      accountId: account.id, categoryId: selectedCategoryId,
-      transactionDate: String(form.get('transactionDate')), note: String(form.get('note') ?? '').trim()
-    });
-    event.currentTarget.reset();
+    setWorking(true);
+    try {
+      let noteImagePath = '';
+      if (user && noteImage) {
+        const upload = await apiRequest('/auth/transaction-images', {
+          method: 'POST', body: JSON.stringify({ image: noteImage })
+        });
+        noteImagePath = upload.data.path;
+      }
+      onSubmit({
+        id: crypto.randomUUID(), type, amount: centsToAmount(cents), currency: account.currency,
+        accountId: account.id, categoryId: selectedCategoryId,
+        transactionDate: String(form.get('transactionDate')), note: String(form.get('note') ?? '').trim(),
+        ...(user && noteImagePath ? { noteImage: noteImagePath } : {})
+      });
+      formElement.reset();
+      setNoteImage('');
+    } catch (submitError) {
+      setError(submitError.message || t('saveFailed'));
+    } finally {
+      setWorking(false);
+    }
   }
+
   return (
     <section className="panel side-editor">
-      <div className="editor-heading"><div><div className="eyebrow">{t('activity')}</div><h2>{t('newTransaction')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
+      <div className="editor-heading"><div><div className="eyebrow">{t('activity')}</div><h2>{t('newTransaction')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>x</button></div>
       {!account ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></div> : <>
         <div className="editing-account"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>{account.currency}</small></div></div>
         <form onSubmit={submit}>
@@ -380,11 +444,15 @@ function TransactionForm({ account, categories, t, onSubmit, onCancel, onCreateA
           <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
           <div className="field"><span>{t('category')}</span><div className="category-chip-list" role="group" aria-label={t('category')}>
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
-          </div></div>
+            <button type="button" className="category-chip category-add-chip" aria-label={t('addCategory')} title={t('addCategory')} onClick={() => { setAddingCategory((current) => !current); setNewCategoryName(''); }}>+</button>
+          </div>
+          {addingCategory && <div className="category-add-form"><input type="text" maxLength="50" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); createCategory(); } }} placeholder={t('categoryName')} aria-label={t('categoryName')} /><button type="button" className="secondary-button" onClick={createCategory}>{t('save')}</button></div>}
+          </div>
           <label className="field"><span>{t('date')}</span><input name="transactionDate" type="date" defaultValue={today()} required /></label>
           <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" /></label>
+          {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImage ? t('changeImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={chooseNoteImage} /></label>{noteImage && <div className="note-image-preview"><img src={noteImage} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImage('')}>{t('removeImage')}</button></div>}</div>}
           {error && <div className="inline-error">{error}</div>}
-          <button className="primary-button" type="submit">{t('save')} <span>+</span></button>
+          <button className="primary-button" type="submit" disabled={working}>{working ? '?' : t('save')} <span>+</span></button>
         </form>
       </>}
     </section>
@@ -412,6 +480,7 @@ function TransactionList({ items, categories, accounts = [], t, language, onDele
           <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}</span>
           <div className="transaction-info">
             <strong>{item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong>
+            {item.noteImage && <img className="transaction-note-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
             <div className="transaction-meta-tags">
               {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
               <span className="transaction-tag">{categoryMap.get(item.categoryId) || '\u2014'}</span>
