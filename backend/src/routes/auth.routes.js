@@ -35,7 +35,9 @@ const workspaceInput = z.object({
   transactions: z.array(z.object({
     id: z.string().min(1).max(80), type: z.enum(['income', 'expense']),
     amount: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/).refine((value) => new Decimal(value).gt(0)), currency: z.enum(CURRENCIES),
+    title: z.string().trim().max(100).optional().default(''),
     categoryId: z.string().min(1).max(80), transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    transactionTime: z.string().regex(/^$|^(?:[01]\d|2[0-3]):[0-5]\d$/).optional().default(''),
     note: z.string().max(500).default(''), noteImage: transactionImagePath.optional().default(''),
     accountId: z.string().min(1).max(80).nullable().optional()
   }).strict()).max(10000),

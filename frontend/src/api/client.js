@@ -11,31 +11,43 @@ async function readCsrfToken() {
 
 export async function apiRequest(path, options = {}) {
   const method = (options.method ?? 'GET').toUpperCase();
-  const headers = {
+  const baseHeaders = {
     Accept: 'application/json',
     ...(options.body ? { 'Content-Type': 'application/json' } : {}),
     ...options.headers
   };
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-    if (!csrfToken) await readCsrfToken();
-    headers['X-CSRF-Token'] = csrfToken;
-  }
+  const requiresCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  let csrfRetries = 0;
+  while (true) {
+    const headers = { ...baseHeaders };
+    if (requiresCsrf) {
+      if (!csrfToken) await readCsrfToken();
+      headers['X-CSRF-Token'] = csrfToken;
+    }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    method,
-    headers,
-    credentials: 'include'
-  });
-  const payload = response.status === 204 ? null : await response.json();
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message ?? `Request failed (${response.status})`);
-    error.code = payload?.error?.code;
-    error.status = response.status;
-    error.fields = payload?.error?.fields;
-    throw error;
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      method,
+      headers,
+      credentials: 'include'
+    });
+    const payload = response.status === 204 ? null : await response.json();
+    if (!response.ok) {
+      const code = payload?.error?.code;
+      if (requiresCsrf && response.status === 403 && csrfRetries === 0 && ['CSRF_REQUIRED', 'CSRF_INVALID'].includes(code)) {
+        csrfToken = null;
+        csrfRetries += 1;
+        await readCsrfToken();
+        continue;
+      }
+      const error = new Error(payload?.error?.message ?? `Request failed (${response.status})`);
+      error.code = code;
+      error.status = response.status;
+      error.fields = payload?.error?.fields;
+      throw error;
+    }
+    return payload;
   }
-  return payload;
 }
 
 export function refreshCsrfToken() {

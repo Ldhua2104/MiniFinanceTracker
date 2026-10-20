@@ -21,8 +21,10 @@ const transactionSchema = new mongoose.Schema({
   type: { type: String, enum: TRANSACTION_TYPES, required: true },
   amount: { type: String, required: true, match: /^\d{1,16}(?:\.\d{1,2})?$/ },
   currency: { type: String, enum: CURRENCIES, required: true },
+  title: { type: String, default: '', trim: true, maxlength: 100 },
   categoryId: { type: String, required: true, maxlength: 80 },
   transactionDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+  transactionTime: { type: String, default: '', match: /^$|^(?:[01]\d|2[0-3]):[0-5]\d$/ },
   note: { type: String, default: '', maxlength: 500 },
   noteImage: { type: String, default: '', maxlength: 180, match: /^$|^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i },
   accountId: { type: String, default: null, maxlength: 80 }

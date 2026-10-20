@@ -4,7 +4,9 @@ import { env } from '../config/env.js';
 
 export function requireCsrf(req, res, next) {
   const origin = req.get('origin');
-  if (origin && origin !== env.APP_ORIGIN) {
+  const configuredOrigin = new URL(env.APP_ORIGIN).origin;
+  const sameOrigin = req.get('host') ? `${req.protocol}://${req.get('host')}` : null;
+  if (origin && origin !== configuredOrigin && origin !== sameOrigin) {
     return res.status(403).json({ error: { code: 'ORIGIN_REJECTED', message: 'Request origin is not allowed' }, meta: { requestId: req.requestId } });
   }
 

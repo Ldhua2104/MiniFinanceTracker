@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import {
   clearAnonymousWorkspace, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
@@ -13,6 +13,21 @@ const today = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
+
+function localTransactionTimestamp(date = new Date()) {
+  return {
+    transactionDate: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`,
+    transactionTime: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  };
+}
+
+function formatTransactionTime(value, format, language) {
+  if (!value) return '\u2014';
+  const [hour, minute] = value.split(':').map(Number);
+  if (format !== '12') return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  const date = new Date(2000, 0, 1, hour, minute);
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date);
+}
 
 function recentFiveDays() {
   const center = new Date(`${today()}T12:00:00`);
@@ -46,6 +61,7 @@ function centsToAmount(cents) {
 export function App() {
   const [language, setLanguage] = useState(detectLanguage);
   const [theme, setTheme] = useState(() => localStorage.getItem('mini-finance.theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  const [timeFormat, setTimeFormat] = useState(() => localStorage.getItem('mini-finance.time-format') === '12' ? '12' : '24');
   const [page, setPage] = useState('overview');
   const [user, setUser] = useState(null);
   const [anonymousProfile, setAnonymousProfile] = useState(loadAnonymousProfile);
@@ -55,6 +71,9 @@ export function App() {
   const [migration, setMigration] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [rightEditor, setRightEditor] = useState(null);
+  const [editingTransaction, setEditingTransaction] = useState(null);
+  const [editorLoadVersion, setEditorLoadVersion] = useState(0);
+  const [newTransactionTimestamp, setNewTransactionTimestamp] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [month, setMonth] = useState(today().slice(0, 7));
   const t = (key) => translate(language, key);
@@ -84,6 +103,8 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('mini-finance.theme', theme);
   }, [theme]);
+
+  useEffect(() => localStorage.setItem('mini-finance.time-format', timeFormat), [timeFormat]);
 
   useEffect(() => saveLanguage(language), [language]);
 
@@ -115,7 +136,7 @@ export function App() {
 
   const selectedAccount = workspace.accounts.find((account) => account.id === selectedAccountId) ?? null;
   const accountTransactions = selectedAccount ? workspace.transactions.filter((item) => item.accountId === selectedAccount.id) : [];
-  const monthTransactions = accountTransactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
+  const monthTransactions = accountTransactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
   const trend = useMemo(() => makeTrend(selectedAccount, accountTransactions, language), [selectedAccount, accountTransactions, language]);
   const currency = selectedAccount?.currency ?? user?.baseCurrency ?? 'USD';
 
@@ -166,6 +187,10 @@ export function App() {
     setWorkspace((current) => ({ ...current, transactions: [transaction, ...current.transactions] }));
   }
 
+  function updateTransaction(transaction) {
+    setWorkspace((current) => ({ ...current, transactions: current.transactions.map((item) => item.id === transaction.id ? transaction : item) }));
+  }
+
   function addCategory(category) {
     setWorkspace((current) => current.categories.some((item) => item.id === category.id)
       ? current
@@ -183,7 +208,30 @@ export function App() {
   }
 
   function openTransactionEditor() {
+    setEditingTransaction(null);
+    setEditorLoadVersion((version) => version + 1);
+    setNewTransactionTimestamp(localTransactionTimestamp());
     setRightEditor('transaction');
+  }
+
+  function openTransactionForEdit(transaction) {
+    setEditingTransaction(transaction);
+    setNewTransactionTimestamp(null);
+    setEditorLoadVersion((version) => version + 1);
+    setRightEditor('edit-transaction');
+  }
+
+  function submitTransaction(transaction) {
+    if (editingTransaction) updateTransaction(transaction);
+    else addTransaction(transaction);
+    setEditingTransaction(null);
+    setRightEditor(null);
+  }
+
+  function removeTransaction(id) {
+    deleteTransaction(id);
+    setEditingTransaction(null);
+    setRightEditor(null);
   }
 
   const saveLabel = saveStatus === 'failed' ? t('saveFailed') : saveStatus === 'saved' ? t('saved') : '…';
@@ -232,13 +280,13 @@ export function App() {
           {page === 'profile' ? (
             <ProfilePage user={user} anonymousProfile={anonymousProfile} onAnonymousProfileChange={setAnonymousProfile} onUserUpdated={setUser} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
           ) : page === 'settings' ? (
-            <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} />
+            <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} />
           ) : page === 'budgets' ? (
             <PlaceholderPage title={t('budgets')} detail={t('comingSoon')} />
           ) : page === 'activity' ? (
             <section className="page-section">
               <PageTitle title={t('activity')} detail={t('activityHint')} />
-              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
+              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} timeFormat={timeFormat} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} account={selectedAccount} />
             </section>
           ) : (
             <>
@@ -261,7 +309,7 @@ export function App() {
               </section>
 
               {selectedAccount && <TrendChart account={selectedAccount} points={trend} t={t} locale={language === 'zh' ? 'zh-CN' : 'en-US'} />}
-              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} onDelete={deleteTransaction} onAdd={openTransactionEditor} account={selectedAccount} />
+              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} timeFormat={timeFormat} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} account={selectedAccount} />
             </>
           )}
         </main>
@@ -269,8 +317,8 @@ export function App() {
         <aside className={`right-rail ${rightEditor ? 'editing' : ''}`}>
           {rightEditor === 'account' ? (
             <AccountForm t={t} onCancel={() => setRightEditor(null)} onSubmit={addAccount} />
-          ) : rightEditor === 'transaction' ? (
-            <TransactionForm account={selectedAccount} categories={workspace.categories} user={user} t={t} onCancel={() => setRightEditor(null)} onSubmit={(transaction) => { addTransaction(transaction); setRightEditor(null); }} onCreateAccount={() => setRightEditor('account')} onCreateCategory={addCategory} />
+          ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
+            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} categories={workspace.categories} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={() => setRightEditor('account')} onCreateCategory={addCategory} />
           ) : (
             <>
               <div className="right-card account-card">
@@ -343,28 +391,33 @@ function AccountForm({ t, onCancel, onSubmit }) {
   );
 }
 
-function TransactionPanel({ items, categories, accounts, t, language, onDelete, onAdd, account }) {
+function TransactionPanel({ items, categories, accounts, t, language, timeFormat, onDelete, onAdd, onEdit, account }) {
   return (
     <section className="panel transaction-panel">
       <div className="panel-heading">
         <div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div>
         <div className="panel-actions"><span className="count-pill">{items.length} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
       </div>
-      {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} onDelete={onDelete} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{account ? t('empty') : t('chooseAccountFirst')}</p></div>}
+      {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} onDelete={onDelete} onEdit={onEdit} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{account ? t('empty') : t('chooseAccountFirst')}</p></div>}
     </section>
   );
 }
 
-function TransactionForm({ account, categories, user, t, onSubmit, onCancel, onCreateAccount, onCreateCategory }) {
-  const [type, setType] = useState('expense');
-  const [categoryId, setCategoryId] = useState('');
+function TransactionForm({ account, categories, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateCategory }) {
+  const [type, setType] = useState(initialTransaction?.type ?? 'expense');
+  const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
+  const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
   const [newCategoryName, setNewCategoryName] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
-  const [noteImage, setNoteImage] = useState('');
+  const [noteImage, setNoteImage] = useState(initialTransaction?.noteImage ?? '');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const transactionTime = initialTransaction
+    ? (initialTransaction.transactionTime || '')
+    : (openedAt?.transactionTime || '');
   const choices = categories.filter((item) => item.type === type && !item.archived);
   const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
+  const weekday = transactionDate ? new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long' }).format(new Date(`${transactionDate}T12:00:00`)) : '';
 
   function createCategory() {
     const name = newCategoryName.trim();
@@ -405,24 +458,29 @@ function TransactionForm({ account, categories, user, t, onSubmit, onCancel, onC
     if (!account || working) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const title = String(form.get('title') ?? '').trim();
     const amount = String(form.get('amount')).trim();
     const cents = moneyToCents(amount);
+    if (!title) return setError(t('fieldRequired'));
     if (!cents || cents <= 0n) return setError(t('fieldRequired'));
     if (!selectedCategoryId) return setError(t('fieldRequired'));
     setError('');
     setWorking(true);
     try {
       let noteImagePath = '';
-      if (user && noteImage) {
+      if (user && noteImage.startsWith('data:')) {
         const upload = await apiRequest('/auth/transaction-images', {
           method: 'POST', body: JSON.stringify({ image: noteImage })
         });
         noteImagePath = upload.data.path;
+      } else if (user) {
+        noteImagePath = noteImage;
       }
       onSubmit({
-        id: crypto.randomUUID(), type, amount: centsToAmount(cents), currency: account.currency,
+        id: initialTransaction?.id ?? crypto.randomUUID(), type, amount: centsToAmount(cents), currency: account.currency,
         accountId: account.id, categoryId: selectedCategoryId,
-        transactionDate: String(form.get('transactionDate')), note: String(form.get('note') ?? '').trim(),
+        title,
+        transactionDate, transactionTime, note: String(form.get('note') ?? '').trim(),
         ...(user && noteImagePath ? { noteImage: noteImagePath } : {})
       });
       formElement.reset();
@@ -436,30 +494,41 @@ function TransactionForm({ account, categories, user, t, onSubmit, onCancel, onC
 
   return (
     <section className="panel side-editor">
-      <div className="editor-heading"><div><div className="eyebrow">{t('activity')}</div><h2>{t('newTransaction')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>x</button></div>
+      <div className="editor-heading"><div className="editor-heading-title"><div className="eyebrow">{t('activity')}</div><h2>{initialTransaction ? t('editTransaction') : t('newTransaction')}</h2></div><div className="editor-heading-side"><div className="editor-time"><strong>{formatTransactionTime(transactionTime, timeFormat, language)}</strong></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>x</button></div></div>
       {!account ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></div> : <>
         <div className="editing-account"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>{account.currency}</small></div></div>
         <form onSubmit={submit}>
           <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); }}>{t('incomeType')}</button></div></label>
-          <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+          <label className="field"><span>{t('titleLabel')}</span><input name="title" type="text" maxLength="100" defaultValue={initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || ''} required autoFocus /></label>
+          <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /></label>
           <div className="field"><span>{t('category')}</span><div className="category-chip-list" role="group" aria-label={t('category')}>
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
             <button type="button" className="category-chip category-add-chip" aria-label={t('addCategory')} title={t('addCategory')} onClick={() => { setAddingCategory((current) => !current); setNewCategoryName(''); }}>+</button>
           </div>
           {addingCategory && <div className="category-add-form"><input type="text" maxLength="50" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); createCategory(); } }} placeholder={t('categoryName')} aria-label={t('categoryName')} /><button type="button" className="secondary-button" onClick={createCategory}>{t('save')}</button></div>}
           </div>
-          <label className="field"><span>{t('date')}</span><input name="transactionDate" type="date" defaultValue={today()} required /></label>
-          <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" /></label>
+          <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
+          <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>
           {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImage ? t('changeImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={chooseNoteImage} /></label>{noteImage && <div className="note-image-preview"><img src={noteImage} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImage('')}>{t('removeImage')}</button></div>}</div>}
           {error && <div className="inline-error">{error}</div>}
-          <button className="primary-button" type="submit" disabled={working}>{working ? '?' : t('save')} <span>+</span></button>
+          <div className="transaction-form-actions">
+            <button className="primary-button" type="submit" disabled={working}>{working ? '?' : initialTransaction ? t('updateTransaction') : t('save')} <span>{initialTransaction ? '↻' : '+'}</span></button>
+            {initialTransaction && <button className="delete-transaction-button" type="button" onClick={() => confirmDeleteTransaction(initialTransaction.id, t, onDelete)} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 3v6m4-6v6" /></svg><span>{t('delete')}</span></button>}
+          </div>
         </form>
       </>}
     </section>
   );
 }
 
-function TransactionList({ items, categories, accounts = [], t, language, onDelete }) {
+function confirmDeleteTransaction(id, t, onDelete) {
+  if (window.confirm(t('confirmDelete'))) onDelete(id);
+}
+
+function TransactionList({ items, categories, accounts = [], t, language, timeFormat, onDelete, onEdit }) {
+  const [tooltipId, setTooltipId] = useState(null);
+  const hoverTimer = useRef(null);
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
   const categoryMap = new Map(categories.map((item) => [item.id, item.name]));
   const accountMap = new Map(accounts.map((item) => [item.id, item.name]));
   const groups = items.reduce((result, item) => {
@@ -472,22 +541,34 @@ function TransactionList({ items, categories, accounts = [], t, language, onDele
   const formatGroupDate = (date) => new Intl.DateTimeFormat(locale, {
     weekday: 'long', month: 'short', day: 'numeric'
   }).format(new Date(`${date}T12:00:00`));
+  function startTooltip(id) {
+    clearTimeout(hoverTimer.current);
+    setTooltipId(null);
+    hoverTimer.current = setTimeout(() => setTooltipId(id), 550);
+  }
+  function stopTooltip() {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    setTooltipId(null);
+  }
   return (
     <div className="transaction-list">
       {groups.map((group) => <section className="transaction-date-group" key={group.date}>
         <h3>{formatGroupDate(group.date)}</h3>
-        {group.items.map((item) => <article className="transaction-row" key={item.id}>
+        {group.items.map((item) => <article className={`transaction-row ${tooltipId === item.id ? 'tooltip-visible' : ''}`} key={item.id} role="button" tabIndex={0} onMouseEnter={() => startTooltip(item.id)} onMouseLeave={stopTooltip} onClick={() => onEdit(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item); } }}>
           <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}</span>
           <div className="transaction-info">
-            <strong>{item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong>
+            <strong>{item.title || item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong>
             {item.noteImage && <img className="transaction-note-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
             <div className="transaction-meta-tags">
+              {item.transactionTime && <span className="transaction-time-tag">{formatTransactionTime(item.transactionTime, timeFormat, language)}</span>}
               {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
               <span className="transaction-tag">{categoryMap.get(item.categoryId) || '\u2014'}</span>
             </div>
           </div>
           <strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>
-          <button className="icon-button" onClick={() => { if (window.confirm(t('confirmDelete'))) onDelete(item.id); }} aria-label={t('delete')} title={t('delete')}>x</button>
+          <button className="icon-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}>x</button>
+          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong><b className={item.type}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {categoryMap.get(item.categoryId) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
         </article>)}
       </section>)}
     </div>
@@ -541,12 +622,13 @@ function PlaceholderPage({ title, detail }) {
   return <section className="page-section"><PageTitle title={title} detail={detail} /><div className="panel placeholder-panel"><span className="empty-icon">?</span><p>{detail}</p></div></section>;
 }
 
-function SettingsPage({ t, language, setLanguage, theme, setTheme }) {
+function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat }) {
   const [migrationNotice, setMigrationNotice] = useState(false);
   return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
     <div className="panel settings-panel">
       <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh">??</option><option value="en">English</option></select></label>
       <label className="settings-row"><span><strong>{t('theme')}</strong><small>{t('themeHint')}</small></span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></select></label>
+      <label className="settings-row"><span><strong>{t('timeFormat')}</strong><small>{t('timeFormatHint')}</small></span><select value={timeFormat} onChange={(event) => setTimeFormat(event.target.value)}><option value="12">{t('hourFormat12')}</option><option value="24">{t('hourFormat24')}</option></select></label>
     </div>
     <article className="panel migration-option-card">
       <div><strong>{t('migrationOption')}</strong><p>{t('migrationOptionHint')}</p>{migrationNotice && <small className="migration-notice">{t('migrationComingSoon')}</small>}</div>
