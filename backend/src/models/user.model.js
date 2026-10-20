@@ -4,6 +4,8 @@ import { schemaOptions } from './model-options.js';
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
+  username: { type: String, required: true, trim: true, default: 'Default User', maxlength: 60 },
+  avatar: { type: String, default: '', maxlength: 1400000 },
   passwordHash: { type: String, required: true, select: false },
   role: { type: String, enum: USER_ROLES, default: 'user', required: true },
   status: { type: String, enum: USER_STATUSES, default: 'active', required: true },

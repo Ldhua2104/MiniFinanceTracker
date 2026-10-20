@@ -20,6 +20,13 @@ const messages = {
     saved: 'Saved', saveFailed: 'Could not save your data. Please try again.', roleUser: 'Member account', roleAnonymous: 'Anonymous',
     currency: 'Currency', delete: 'Delete', fieldRequired: 'Please complete the required fields.',
     confirmDelete: 'Delete this transaction? This cannot be undone.',
+    username: 'Username', defaultUser: 'Default User', profileIntro: 'Your profile and account details.',
+    profileEditHint: 'Personalize your local profile. It will be included when you create an account.',
+    changeAvatar: 'Change avatar', avatarTypeError: 'Choose a PNG, JPEG, WEBP or GIF image under 1 MB.',
+    profileLoginPrompt: 'Sign in or create an account to keep your profile available across devices.',
+    loginOrRegister: 'Sign in or create an account', authModalIntro: 'Use your email to sign in or create your account.',
+    migrationOption: 'Move local records to your account', migrationOptionHint: 'Transfer anonymous transactions and budgets to your account.',
+    migrationComingSoon: 'Local record migration will be available here soon.',
     footer: 'Personal finance, kept simple', overviewHint: 'Your monthly picture at a glance', transactionsCount: 'transactions'
   },
   zh: {
@@ -43,6 +50,13 @@ const messages = {
     saved: '已保存', saveFailed: '保存失败，请重试。', roleUser: '已登录账户', roleAnonymous: '匿名使用',
     currency: '币种', delete: '删除', fieldRequired: '请填写必填项目。',
     confirmDelete: '\u786e\u5b9a\u5220\u9664\u8fd9\u6761\u4ea4\u6613\u5417\uff1f\u5220\u9664\u540e\u65e0\u6cd5\u6062\u590d\u3002',
+    username: '\u7528\u6237\u540d', defaultUser: 'Default User', profileIntro: '\u4e2a\u4eba\u8d44\u6599\u4e0e\u8d26\u6237\u4fe1\u606f',
+    profileEditHint: '\u4e2a\u6027\u5316\u672c\u5730\u8d44\u6599\uff1b\u521b\u5efa\u8d26\u6237\u65f6\u4f1a\u4e00\u5e76\u4fdd\u5b58\u3002',
+    changeAvatar: '\u66f4\u6362\u5934\u50cf', avatarTypeError: '\u8bf7\u9009\u62e9 1 MB \u4ee5\u5185\u7684 PNG\u3001JPEG\u3001WEBP \u6216 GIF \u56fe\u7247\u3002',
+    profileLoginPrompt: '\u767b\u5f55\u6216\u521b\u5efa\u8d26\u6237\uff0c\u53ef\u5728\u591a\u53f0\u8bbe\u5907\u4e0a\u4f7f\u7528\u4e2a\u4eba\u8d44\u6599\u3002',
+    loginOrRegister: '\u767b\u5f55\u6216\u521b\u5efa\u8d26\u6237', authModalIntro: '\u4f7f\u7528\u90ae\u7bb1\u767b\u5f55\u6216\u521b\u5efa\u8d26\u6237\u3002',
+    migrationOption: '\u5c06\u672c\u5730\u8bb0\u5f55\u8fc1\u79fb\u5230\u8d26\u6237', migrationOptionHint: '\u5c06\u533f\u540d\u4ea4\u6613\u548c\u9884\u7b97\u8f6c\u79fb\u5230\u8d26\u6237\u3002',
+    migrationComingSoon: '\u672c\u5730\u8bb0\u5f55\u8fc1\u79fb\u529f\u80fd\u5c06\u5728\u6b64\u5904\u63d0\u4f9b\u3002',
     footer: '简单记录，安心生活', overviewHint: '快速了解本月收支', transactionsCount: '笔记录'
   }
 };

@@ -1,6 +1,30 @@
 import { apiRequest } from '../api/client.js';
 
 const STORAGE_KEY = 'mini-finance.anonymous-workspace.v1';
+const PROFILE_STORAGE_KEY = 'mini-finance.anonymous-profile.v1';
+
+export function defaultAnonymousProfile() {
+  return { username: 'Default User', avatar: '' };
+}
+
+export function loadAnonymousProfile() {
+  try {
+    const stored = localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (!stored) return defaultAnonymousProfile();
+    const profile = JSON.parse(stored);
+    return {
+      username: typeof profile.username === 'string' && profile.username.trim() ? profile.username : 'Default User',
+      avatar: typeof profile.avatar === 'string' ? profile.avatar : ''
+    };
+  } catch {
+    localStorage.removeItem(PROFILE_STORAGE_KEY);
+    return defaultAnonymousProfile();
+  }
+}
+
+export function saveAnonymousProfile(profile) {
+  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+}
 
 export function emptyWorkspace() {
   return { accounts: [], categories: [], transactions: [], budgets: [], revision: 0 };

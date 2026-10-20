@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import {
-  clearAnonymousWorkspace, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousWorkspace,
-  loadServerWorkspace, moneyToCents, saveAnonymousWorkspace, saveServerWorkspace
+  clearAnonymousWorkspace, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
+  loadServerWorkspace, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerWorkspace
 } from '../data/workspace.js';
 import { detectLanguage, saveLanguage, translate } from '../i18n.js';
 
@@ -48,6 +48,7 @@ export function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('mini-finance.theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [page, setPage] = useState('overview');
   const [user, setUser] = useState(null);
+  const [anonymousProfile, setAnonymousProfile] = useState(loadAnonymousProfile);
   const [role, setRole] = useState(APP_ROLES.anonymous);
   const [workspace, setWorkspace] = useState(emptyWorkspace());
   const [workspaceReady, setWorkspaceReady] = useState(false);
@@ -85,6 +86,10 @@ export function App() {
   }, [theme]);
 
   useEffect(() => saveLanguage(language), [language]);
+
+  useEffect(() => {
+    if (role === 'anonymous') saveAnonymousProfile(anonymousProfile);
+  }, [anonymousProfile, role]);
 
   useEffect(() => {
     if (!workspaceReady) return undefined;
@@ -194,8 +199,8 @@ export function App() {
             <span aria-hidden="true">{theme === 'light' ? '◐' : '☼'}</span><span>{theme === 'light' ? t('dark') : t('light')}</span>
           </button>
           <button className={`profile-chip ${page === 'profile' ? 'is-active' : ''}`} onClick={() => setPage('profile')}>
-            <span className="avatar">{user?.email?.slice(0, 1).toUpperCase() ?? '·'}</span>
-            <span>{user?.email ?? t('profile')}</span>
+            <ProfileAvatar className="avatar" src={user?.avatar ?? anonymousProfile.avatar} name={user?.username ?? anonymousProfile.username} />
+            <span>{user?.username ?? anonymousProfile.username}</span>
           </button>
         </div>
       </header>
@@ -219,7 +224,7 @@ export function App() {
 
         <main className="main-content">
           {page === 'profile' ? (
-            <ProfilePage user={user} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
+            <ProfilePage user={user} anonymousProfile={anonymousProfile} onAnonymousProfileChange={setAnonymousProfile} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
           ) : page === 'settings' ? (
             <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} />
           ) : page === 'budgets' ? (
@@ -468,18 +473,31 @@ function PlaceholderPage({ title, detail }) {
 }
 
 function SettingsPage({ t, language, setLanguage, theme, setTheme }) {
+  const [migrationNotice, setMigrationNotice] = useState(false);
   return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
     <div className="panel settings-panel">
       <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh">??</option><option value="en">English</option></select></label>
       <label className="settings-row"><span><strong>{t('theme')}</strong><small>{t('themeHint')}</small></span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></select></label>
     </div>
+    <article className="panel migration-option-card">
+      <div><strong>{t('migrationOption')}</strong><p>{t('migrationOptionHint')}</p>{migrationNotice && <small className="migration-notice">{t('migrationComingSoon')}</small>}</div>
+      <button className="secondary-button" onClick={() => setMigrationNotice(true)}>{t('migrationOption')}</button>
+    </article>
   </section>;
 }
 
-function ProfilePage({ user, t, onAuthenticated, onSignOut, migration, onMigration }) {
+function ProfileAvatar({ className, src, name }) {
+  if (src) return <img className={`${className} profile-avatar-image`} src={src} alt={name} />;
+  const initials = (name || 'Default User').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'DU';
+  return <span className={className} aria-label={name}>{initials}</span>;
+}
+
+function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, t, onAuthenticated, onSignOut, migration, onMigration }) {
   const [mode, setMode] = useState('login');
+  const [authOpen, setAuthOpen] = useState(false);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+
   async function submit(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -492,17 +510,42 @@ function ProfilePage({ user, t, onAuthenticated, onSignOut, migration, onMigrati
     setError('');
     setWorking(true);
     try {
+      const body = { email, password };
+      if (mode === 'register') {
+        body.username = anonymousProfile.username.trim() || t('defaultUser');
+        body.avatar = anonymousProfile.avatar;
+      }
       const response = await apiRequest(`/auth/${mode === 'register' ? 'register' : 'login'}`, {
-        method: 'POST',
-        body: JSON.stringify({ email, password })
+        method: 'POST', body: JSON.stringify(body)
       });
       await onAuthenticated(response.data);
+      setAuthOpen(false);
     } catch (authError) {
       setError(authError.message || t('authFailed'));
     } finally {
       setWorking(false);
     }
   }
+
+  function changeAvatar(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1024 * 1024) {
+      setError(t('avatarTypeError'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        onAnonymousProfileChange({ ...anonymousProfile, avatar: reader.result });
+        setError('');
+      }
+    };
+    reader.onerror = () => setError(t('avatarTypeError'));
+    reader.readAsDataURL(file);
+  }
+
   async function migrate(choice) {
     setWorking(true);
     setError('');
@@ -511,33 +554,57 @@ function ProfilePage({ user, t, onAuthenticated, onSignOut, migration, onMigrati
     finally { setWorking(false); }
   }
 
+  function openAuth(nextMode = 'login') {
+    setMode(nextMode);
+    setError('');
+    setAuthOpen(true);
+  }
+
   return (
     <section className="profile-view">
-      <div className="page-heading profile-heading"><div><div className="eyebrow">{t('profile')}</div><h1>{t('security')}</h1><p>{t('secureNote')}</p></div></div>
+      <div className="page-heading profile-heading"><div><div className="eyebrow">{t('profile')}</div><h1>{t('security')}</h1><p>{t('profileIntro')}</p></div></div>
       {migration ? (
         <article className="panel migration-panel">
-          <span className="migration-icon">↗</span><div className="eyebrow">{t('migrationTitle')}</div><h2>{t('migrationTitle')}</h2><p>{t('migrationText')}</p>
+          <span className="migration-icon">?</span><div className="eyebrow">{t('migrationTitle')}</div><h2>{t('migrationTitle')}</h2><p>{t('migrationText')}</p>
           {error && <div className="inline-error">{error}</div>}
-          <div className="migration-actions"><button className="primary-button" disabled={working} onClick={() => void migrate('merge')}>{t('merge')} <span>→</span></button><button className="secondary-button" disabled={working} onClick={() => void migrate('server')}>{t('keepServer')}</button></div>
-        </article>
-      ) : user ? (
-        <article className="panel signed-in-panel">
-          <div className="signed-avatar">{user.email.slice(0, 1).toUpperCase()}</div><div className="eyebrow">{t('account')}</div><h2>{user.email}</h2><p>{t('roleUser')} · {user.baseCurrency}</p>
-          <button className="secondary-button" onClick={onSignOut}>{t('signOut')}</button>
+          <div className="migration-actions"><button className="primary-button" disabled={working} onClick={() => void migrate('merge')}>{t('merge')} <span>?</span></button><button className="secondary-button" disabled={working} onClick={() => void migrate('server')}>{t('keepServer')}</button></div>
         </article>
       ) : (
-        <article className="panel auth-panel">
-          <div className="auth-tabs"><button className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>{t('signIn')}</button><button className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError(''); }}>{t('register')}</button></div>
-          <form onSubmit={submit}>
-            <label className="field"><span>{t('email')}</span><input name="email" type="email" autoComplete="email" required /></label>
-            <label className="field"><span>{t('password')}</span><input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? 12 : 1} maxLength="128" required /></label>
-            {mode === 'register' && <label className="field"><span>{t('confirmPassword')}</span><input name="confirmPassword" type="password" autoComplete="new-password" minLength="12" maxLength="128" required /></label>}
-            {error && <div className="inline-error">{error}</div>}
-            <button className="primary-button auth-submit" type="submit" disabled={working}>{working ? '…' : mode === 'register' ? t('register') : t('signIn')} <span>→</span></button>
-          </form>
-          <div className="auth-switch">{mode === 'register' ? t('already') : t('noAccount')} <button onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setError(''); }}>{mode === 'register' ? t('switchLogin') : t('switchRegister')}</button></div>
-          <div className="local-privacy"><span>⌂</span>{t('localNote')}</div>
-        </article>
+        <>
+          <article className="panel profile-card">
+            <div className="profile-identity">
+              <div className="profile-avatar-wrap">
+                <ProfileAvatar className="profile-avatar-large" src={user?.avatar ?? anonymousProfile.avatar} name={user?.username ?? anonymousProfile.username} />
+                {!user && <label className="avatar-change-button">{t('changeAvatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={changeAvatar} aria-label={t('changeAvatar')} /></label>}
+              </div>
+              <div className="profile-details">
+                {user ? <><h2>{user.username || t('defaultUser')}</h2><p>{user.email}</p><small>{t('roleUser')} ? {user.baseCurrency}</small></> : <>
+                  <label className="field"><span>{t('username')}</span><input type="text" maxLength="60" value={anonymousProfile.username} onChange={(event) => onAnonymousProfileChange({ ...anonymousProfile, username: event.target.value })} /></label>
+                  <p className="profile-hint">{t('profileEditHint')}</p>
+                </>}
+              </div>
+            </div>
+            {error && !authOpen && <div className="inline-error">{error}</div>}
+            {user ? <button className="secondary-button profile-signout" onClick={onSignOut}>{t('signOut')}</button> : (
+              <div className="profile-auth-prompt"><p>{t('profileLoginPrompt')}</p><button className="primary-button" onClick={() => openAuth('login')}>{t('loginOrRegister')} <span>?</span></button></div>
+            )}
+          </article>
+          {authOpen && <div className="auth-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) setAuthOpen(false); }}>
+            <section className="panel auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+              <div className="auth-modal-heading"><div><div className="eyebrow">{t('profile')}</div><h2 id="auth-modal-title">{mode === 'register' ? t('register') : t('signIn')}</h2><p>{t('authModalIntro')}</p></div><button className="icon-button auth-modal-close" type="button" onClick={() => setAuthOpen(false)} aria-label={t('close')} disabled={working}>x</button></div>
+              <div className="auth-tabs"><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>{t('signIn')}</button><button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError(''); }}>{t('register')}</button></div>
+              <form onSubmit={submit}>
+                <label className="field"><span>{t('email')}</span><input name="email" type="email" autoComplete="email" required /></label>
+                <label className="field"><span>{t('password')}</span><input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? 12 : 1} maxLength="128" required /></label>
+                {mode === 'register' && <label className="field"><span>{t('confirmPassword')}</span><input name="confirmPassword" type="password" autoComplete="new-password" minLength="12" maxLength="128" required /></label>}
+                {error && <div className="inline-error">{error}</div>}
+                <button className="primary-button auth-submit" type="submit" disabled={working}>{working ? '?' : mode === 'register' ? t('register') : t('signIn')} <span>?</span></button>
+              </form>
+              <div className="auth-switch">{mode === 'register' ? t('already') : t('noAccount')} <button type="button" onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setError(''); }}>{mode === 'register' ? t('switchLogin') : t('switchRegister')}</button></div>
+              {!user && <div className="local-privacy"><span>i</span>{t('localNote')}</div>}
+            </section>
+          </div>}
+        </>
       )}
     </section>
   );

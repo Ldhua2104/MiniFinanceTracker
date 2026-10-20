@@ -62,6 +62,8 @@ function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    username: user.username || 'Default User',
+    avatar: user.avatar || '',
     role: user.role,
     status: user.status,
     baseCurrency: user.baseCurrency,
@@ -87,6 +89,8 @@ authRouter.post('/register', requireCsrf, async (req, res, next) => {
     const passwordHash = await argon2.hash(input.password);
     const user = await User.create({
       email: input.email,
+      username: input.username,
+      avatar: input.avatar,
       passwordHash,
       role: 'user',
       status: 'active',
