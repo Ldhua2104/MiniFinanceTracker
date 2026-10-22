@@ -7,7 +7,7 @@ import argon2 from 'argon2';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { User, Workspace } from '../models/index.js';
-import { profileInput, registerInput } from '../domain/validation.js';
+import { MAX_IMAGE_BYTES, profileInput, registerInput } from '../domain/validation.js';
 import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
@@ -15,7 +15,7 @@ import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSe
 export const authRouter = Router();
 const transactionImageRoot = fileURLToPath(new URL('../../storage/transaction-images/', import.meta.url));
 const transactionImageInput = z.object({
-  image: z.string().max(1_400_000).regex(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/)
+  image: z.string().max(Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 32).regex(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/)
 }).strict();
 const transactionImagePath = z.string().max(180).regex(/^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i);
 const loginInput = z.object({
@@ -42,10 +42,13 @@ const workspaceInput = z.object({
     accountId: z.string().min(1).max(80).nullable().optional()
   }).strict()).max(10000),
   budgets: z.array(z.object({
-    id: z.string().min(1).max(80), categoryId: z.string().min(1).max(80),
-    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
-    amount: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/).refine((value) => new Decimal(value).gt(0)), currency: z.enum(CURRENCIES)
-  }).strict()).max(1000)
+    id: z.string().min(1).max(80), name: z.string().trim().max(60).optional().default(''),
+    categoryId: z.string().min(1).max(80).optional(),
+    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+    amount: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/).refine((value) => new Decimal(value).gt(0)),
+    currency: z.enum(CURRENCIES), accountId: z.string().min(1).max(80).optional(),
+    color: z.string().regex(/^#[\da-fA-F]{6}$/).optional().default('#557b63')
+  }).strict().refine((budget) => budget.name.length > 0 || Boolean(budget.categoryId && budget.month), 'A budget name is required')).max(1000)
 }).strict().superRefine((workspace, context) => {
   const checkUnique = (items, label) => {
     const seen = new Set();
@@ -59,13 +62,18 @@ const workspaceInput = z.object({
   checkUnique(workspace.transactions, 'transactions');
   checkUnique(workspace.budgets, 'budgets');
   const accountIds = new Set(workspace.accounts.map((account) => account.id));
+  const accountById = new Map(workspace.accounts.map((account) => [account.id, account]));
   const categoryIds = new Set(workspace.categories.map((category) => category.id));
+  const categoryById = new Map(workspace.categories.map((category) => [category.id, category]));
   workspace.transactions.forEach((transaction, index) => {
     if (transaction.accountId && !accountIds.has(transaction.accountId)) context.addIssue({ code: 'custom', path: ['transactions', index, 'accountId'], message: 'Account does not exist in this workspace' });
     if (!categoryIds.has(transaction.categoryId)) context.addIssue({ code: 'custom', path: ['transactions', index, 'categoryId'], message: 'Category does not exist in this workspace' });
   });
   workspace.budgets.forEach((budget, index) => {
-    if (!categoryIds.has(budget.categoryId)) context.addIssue({ code: 'custom', path: ['budgets', index, 'categoryId'], message: 'Category does not exist in this workspace' });
+    if (budget.categoryId && !categoryIds.has(budget.categoryId)) context.addIssue({ code: 'custom', path: ['budgets', index, 'categoryId'], message: 'Category does not exist in this workspace' });
+    if (budget.categoryId && categoryById.get(budget.categoryId)?.type !== 'expense') context.addIssue({ code: 'custom', path: ['budgets', index, 'categoryId'], message: 'Budgets must use an expense category' });
+    if (budget.accountId && !accountIds.has(budget.accountId)) context.addIssue({ code: 'custom', path: ['budgets', index, 'accountId'], message: 'Account does not exist in this workspace' });
+    if (budget.accountId && accountById.get(budget.accountId)?.currency !== budget.currency) context.addIssue({ code: 'custom', path: ['budgets', index, 'currency'], message: 'Budget currency must match the linked account' });
   });
 });
 
@@ -99,8 +107,8 @@ authRouter.post('/transaction-images', requireCsrf, requireUser, async (req, res
     const { image } = transactionImageInput.parse(req.body);
     const [, mime, encoded] = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
     const buffer = Buffer.from(encoded, 'base64');
-    if (buffer.length > 1024 * 1024) {
-      return res.status(400).json({ error: { code: 'IMAGE_TOO_LARGE', message: 'Image must be 1 MB or smaller' }, meta: { requestId: req.requestId } });
+    if (buffer.length > MAX_IMAGE_BYTES) {
+      return res.status(400).json({ error: { code: 'IMAGE_TOO_LARGE', message: 'Image must be 5 MB or smaller' }, meta: { requestId: req.requestId } });
     }
     const validSignature = mime === 'image/png' ? buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
       : mime === 'image/jpeg' ? buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255

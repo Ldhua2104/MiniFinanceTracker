@@ -32,10 +32,13 @@ const transactionSchema = new mongoose.Schema({
 
 const budgetSchema = new mongoose.Schema({
   id: { type: String, required: true, maxlength: 80 },
-  categoryId: { type: String, required: true, maxlength: 80 },
-  month: { type: String, required: true, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
+  name: { type: String, default: '', trim: true, maxlength: 60 },
+  categoryId: { type: String, maxlength: 80 },
+  month: { type: String, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
   amount: { type: String, required: true, match: /^\d{1,16}(?:\.\d{1,2})?$/ },
-  currency: { type: String, enum: CURRENCIES, required: true }
+  currency: { type: String, enum: CURRENCIES, required: true },
+  accountId: { type: String, maxlength: 80 },
+  color: { type: String, default: '#557b63', match: /^#[\da-fA-F]{6}$/ }
 }, { _id: false, strict: 'throw' });
 
 const workspaceSchema = new mongoose.Schema({

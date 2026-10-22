@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
+import { convertCents, fetchLatestFxRates } from '../api/exchange-rates.js';
 import {
   clearAnonymousWorkspace, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
   loadServerWorkspace, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerWorkspace
@@ -33,7 +34,7 @@ function recentFiveDays() {
   const center = new Date(`${today()}T12:00:00`);
   return Array.from({ length: 5 }, (_, index) => {
     const date = new Date(center);
-    date.setDate(center.getDate() + index - 2);
+    date.setDate(center.getDate() + index - 4);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   });
 }
@@ -71,11 +72,17 @@ export function App() {
   const [migration, setMigration] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [rightEditor, setRightEditor] = useState(null);
+  const [editingBudget, setEditingBudget] = useState(null);
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [editorLoadVersion, setEditorLoadVersion] = useState(0);
   const [newTransactionTimestamp, setNewTransactionTimestamp] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [month, setMonth] = useState(today().slice(0, 7));
+  const [reportCurrency, setReportCurrency] = useState(() => {
+    const saved = localStorage.getItem('mini-finance.report-currency');
+    return currencies.includes(saved) ? saved : 'USD';
+  });
+  const [fx, setFx] = useState({ rates: null, date: '', status: 'idle', stale: false });
   const t = (key) => translate(language, key);
 
   useEffect(() => {
@@ -108,6 +115,28 @@ export function App() {
 
   useEffect(() => saveLanguage(language), [language]);
 
+  useEffect(() => localStorage.setItem('mini-finance.report-currency', reportCurrency), [reportCurrency]);
+
+  useEffect(() => {
+    if (page !== 'activity') return undefined;
+    let active = true;
+    setFx((current) => ({ ...current, status: 'loading' }));
+    fetchLatestFxRates()
+      .then((result) => { if (active) setFx({ ...result, status: 'ready' }); })
+      .catch(() => { if (active) setFx((current) => ({ ...current, status: 'error' })); });
+    return () => { active = false; };
+  }, [page]);
+
+  async function refreshFxRates() {
+    setFx((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchLatestFxRates({ force: true });
+      setFx({ ...result, status: 'ready' });
+    } catch {
+      setFx((current) => ({ ...current, status: 'error' }));
+    }
+  }
+
   useEffect(() => {
     if (role === 'anonymous') saveAnonymousProfile(anonymousProfile);
   }, [anonymousProfile, role]);
@@ -137,6 +166,7 @@ export function App() {
   const selectedAccount = workspace.accounts.find((account) => account.id === selectedAccountId) ?? null;
   const accountTransactions = selectedAccount ? workspace.transactions.filter((item) => item.accountId === selectedAccount.id) : [];
   const monthTransactions = accountTransactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
+  const activityTransactions = workspace.transactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
   const trend = useMemo(() => makeTrend(selectedAccount, accountTransactions, language), [selectedAccount, accountTransactions, language]);
   const currency = selectedAccount?.currency ?? user?.baseCurrency ?? 'USD';
 
@@ -191,12 +221,6 @@ export function App() {
     setWorkspace((current) => ({ ...current, transactions: current.transactions.map((item) => item.id === transaction.id ? transaction : item) }));
   }
 
-  function addCategory(category) {
-    setWorkspace((current) => current.categories.some((item) => item.id === category.id)
-      ? current
-      : { ...current, categories: [...current.categories, category] });
-  }
-
   function deleteTransaction(id) {
     setWorkspace((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }));
   }
@@ -204,6 +228,41 @@ export function App() {
   function addAccount(account) {
     setWorkspace((current) => ({ ...current, accounts: [...current.accounts, account] }));
     setSelectedAccountId(account.id);
+    setRightEditor(null);
+  }
+
+  function openBudgetEditor(budget = null) {
+    setEditingBudget(budget);
+    setRightEditor('budget');
+  }
+
+  function saveBudget(budget, { closeEditor = true } = {}) {
+    setWorkspace((current) => {
+      const category = current.categories.find((item) => item.id === budget.categoryId)
+        ?? current.categories.find((item) => item.type === 'expense' && item.name.trim().toLocaleLowerCase() === budget.name.trim().toLocaleLowerCase());
+      const linkedCategory = { ...(category ?? {}), id: budget.categoryId || category?.id || crypto.randomUUID(), name: budget.name, type: 'expense', archived: false };
+      const savedBudget = { ...budget, categoryId: linkedCategory.id };
+      const categoryExists = current.categories.some((item) => item.id === linkedCategory.id);
+      const categories = categoryExists
+        ? current.categories.map((item) => item.id === linkedCategory.id ? linkedCategory : item)
+        : [...current.categories, linkedCategory];
+      return {
+        ...current,
+        categories,
+        budgets: current.budgets.some((item) => item.id === savedBudget.id)
+          ? current.budgets.map((item) => item.id === savedBudget.id || item.categoryId === linkedCategory.id ? { ...item, ...(item.categoryId === linkedCategory.id ? { name: budget.name } : {}), ...(item.id === savedBudget.id ? savedBudget : {}) } : item)
+          : [...current.budgets, savedBudget]
+      };
+    });
+    if (closeEditor) {
+      setEditingBudget(null);
+      setRightEditor(null);
+    }
+  }
+
+  function deleteBudget(id) {
+    setWorkspace((current) => ({ ...current, budgets: current.budgets.filter((item) => item.id !== id) }));
+    setEditingBudget(null);
     setRightEditor(null);
   }
 
@@ -282,12 +341,9 @@ export function App() {
           ) : page === 'settings' ? (
             <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} />
           ) : page === 'budgets' ? (
-            <PlaceholderPage title={t('budgets')} detail={t('comingSoon')} />
+            <BudgetPage budgets={workspace.budgets} transactions={workspace.transactions} categories={workspace.categories} accounts={workspace.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
           ) : page === 'activity' ? (
-            <section className="page-section">
-              <PageTitle title={t('activity')} detail={t('activityHint')} />
-              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} timeFormat={timeFormat} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} account={selectedAccount} />
-            </section>
+            <ActivityPage items={activityTransactions} allTransactions={workspace.transactions} categories={workspace.categories} accounts={workspace.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
           ) : (
             <>
               <section className="page-heading">
@@ -317,8 +373,10 @@ export function App() {
         <aside className={`right-rail ${rightEditor ? 'editing' : ''}`}>
           {rightEditor === 'account' ? (
             <AccountForm t={t} onCancel={() => setRightEditor(null)} onSubmit={addAccount} />
+          ) : rightEditor === 'budget' ? (
+            <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} accounts={workspace.accounts} defaultAccountId={selectedAccountId} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} onCreateAccount={() => setRightEditor('account')} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
-            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} categories={workspace.categories} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={() => setRightEditor('account')} onCreateCategory={addCategory} />
+            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={workspace.accounts} categories={workspace.categories} budgets={workspace.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={() => setRightEditor('account')} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} />
           ) : (
             <>
               <div className="right-card account-card">
@@ -391,54 +449,226 @@ function AccountForm({ t, onCancel, onSubmit }) {
   );
 }
 
-function TransactionPanel({ items, categories, accounts, t, language, timeFormat, onDelete, onAdd, onEdit, account }) {
+const budgetColors = ['#557b63', '#7893a4', '#b88762', '#8879a6', '#b77979', '#a39152'];
+
+function BudgetPage({ budgets, transactions, categories, accounts, month, locale, t, onAdd, onEdit }) {
+  const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
+  const accountMap = new Map(accounts.map((account) => [account.id, account.name]));
+  const visibleBudgets = budgets.filter((budget) => !budget.month || budget.month === month);
+  const monthEnd = new Date(`${month}-01T12:00:00`);
+  monthEnd.setMonth(monthEnd.getMonth() + 1, 0);
+  const monthEndLabel = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(monthEnd);
+
+  function spentFor(budget) {
+    return transactions.reduce((sum, transaction) => {
+      if (transaction.type !== 'expense' || !transaction.transactionDate.startsWith(month) || transaction.currency !== budget.currency || (budget.accountId && transaction.accountId !== budget.accountId)) return sum;
+      const matches = budget.categoryId
+        ? transaction.categoryId === budget.categoryId
+        : categoryMap.get(transaction.categoryId)?.trim().toLocaleLowerCase() === budget.name?.trim().toLocaleLowerCase();
+      return matches ? sum + (moneyToCents(transaction.amount) ?? 0n) : sum;
+    }, 0n);
+  }
+
+  return (
+    <section className="page-section budget-page">
+      <PageTitle title={t('budgets')} detail={t('budgetIntro')} />
+      <section className="panel budget-panel">
+        <div className="panel-heading">
+          <div><div className="eyebrow">{t('budgets')}</div><h2>{t('monthlyBudgets')}</h2></div>
+          <div className="panel-actions"><span className="count-pill">{visibleBudgets.length} {t('budgetsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('addBudget')} title={t('addBudget')}>+</button></div>
+        </div>
+        {visibleBudgets.length ? (
+          <div className="budget-list">
+            {visibleBudgets.map((budget) => <BudgetCard key={budget.id} budget={budget} spent={spentFor(budget)} locale={locale} monthEndLabel={monthEndLabel} categoryMap={categoryMap} accountName={accountMap.get(budget.accountId)} t={t} onClick={() => onEdit(budget)} />)}
+          </div>
+        ) : (
+          <div className="empty-state budget-empty"><span className="empty-icon">＋</span><p>{t('noBudgets')}</p><button className="primary-button" onClick={onAdd}>{t('addBudget')}</button></div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function BudgetCard({ budget, spent, locale, monthEndLabel, categoryMap, accountName, t, onClick }) {
+  const limit = moneyToCents(budget.amount) ?? 0n;
+  const remaining = limit - spent;
+  const progress = limit > 0n ? Math.min(100, Number((spent * 10000n) / limit) / 100) : 0;
+  const name = budget.name || categoryMap.get(budget.categoryId) || t('budgets');
+  return (
+    <button className="budget-card" style={{ '--budget-accent': budget.color || budgetColors[0] }} onClick={onClick}>
+      <span className="budget-card-heading"><strong>{name}</strong><span className="budget-currency">{budget.currency}</span></span>
+      <span className="budget-amounts">
+        <span><small>{t('remainingBudget')}</small><strong>{formatCents(remaining, locale, budget.currency)}</strong></span>
+        <span><small>{t('totalBudget')}</small><strong>{formatCents(limit, locale, budget.currency)}</strong></span>
+      </span>
+      <span className="budget-progress" role="progressbar" aria-label={`${name} ${t('budgetProgress')}`} aria-valuenow={Math.round(progress)} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${progress}%` }} /></span>
+      <span className="budget-card-footer"><span>{accountName || t('allAccounts')}</span><span>{t('spentBudget')}: {formatCents(spent, locale, budget.currency)}</span><span>{t('monthEnds')} {monthEndLabel}</span></span>
+    </button>
+  );
+}
+
+function BudgetForm({ initialBudget, categories, budgets, accounts, defaultAccountId, t, onCancel, onSubmit, onDelete, onCreateAccount, embedded = false }) {
+  const [name, setName] = useState(initialBudget?.name ?? '');
+  const [amount, setAmount] = useState(initialBudget?.amount ?? '100.00');
+  const [accountId, setAccountId] = useState(initialBudget?.accountId || defaultAccountId || accounts[0]?.id || '');
+  const [color, setColor] = useState(initialBudget?.color || budgetColors[0]);
+  const [error, setError] = useState('');
+  const editing = Boolean(initialBudget);
+  const selectedAccount = accounts.find((account) => account.id === accountId);
+
+  function submit(event) {
+    event?.preventDefault();
+    const cleanName = name.trim();
+    const cents = moneyToCents(amount.trim());
+    if (!cleanName || cleanName.length > 60 || cents === null || cents <= 0n) return setError(t('fieldRequired'));
+    if (!selectedAccount) return setError(t('chooseAccountFirst'));
+    const existingCategory = categories.find((category) => category.type === 'expense' && category.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase());
+    const categoryId = initialBudget?.categoryId || existingCategory?.id || crypto.randomUUID();
+    const duplicate = budgets.some((budget) => budget.id !== initialBudget?.id && budget.accountId === accountId && (budget.categoryId === categoryId || budget.name?.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase()));
+    if (duplicate) return setError(t('budgetAlreadyExists'));
+    setError('');
+    onSubmit({
+      id: initialBudget?.id ?? crypto.randomUUID(),
+      name: cleanName,
+      categoryId,
+      amount: centsToAmount(cents),
+      currency: selectedAccount.currency,
+      accountId,
+      color
+    });
+  }
+
+  const fields = <>
+    <label className="field"><span>{t('budgetName')}</span><input name="budgetName" type="text" maxLength="60" value={name} onChange={(event) => setName(event.target.value)} autoFocus={!embedded} required /></label>
+    <div className="field"><span>{t('linkedAccount')}</span>{accounts.length ? <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select> : <><p className="budget-no-account">{t('chooseAccountFirst')}</p><button className="secondary-button" type="button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></>}</div>
+    <label className="field"><span>{t('monthlyAvailable')}</span><div className="budget-amount-input"><input name="budgetAmount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /><span>{selectedAccount?.currency || '—'}</span></div></label>
+    <div className="field"><span>{t('budgetCardColor')}</span><div className="budget-color-picker" role="group" aria-label={t('budgetCardColor')}>
+      {budgetColors.map((value) => <button key={value} type="button" className={`budget-color-swatch ${color === value ? 'selected' : ''}`} style={{ '--swatch-color': value }} onClick={() => setColor(value)} aria-label={value} aria-pressed={color === value} />)}
+    </div></div>
+    {error && <div className="inline-error">{error}</div>}
+  </>;
+
+  if (embedded) return <div className="inline-budget-editor" onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
+    <div className="inline-budget-heading"><strong>{t('addBudget')}</strong><button type="button" className="text-button" onClick={onCancel}>{t('cancel')}</button></div>
+    {fields}
+    <button className="primary-button" type="button" onClick={() => submit()} disabled={!accounts.length}>{t('saveBudget')}</button>
+  </div>;
+
+  return <section className="panel side-editor budget-editor">
+    <div className="editor-heading"><div><div className="eyebrow">{t('budgets')}</div><h2>{editing ? t('editBudget') : t('addBudget')}</h2></div><button className="icon-button close-editor" type="button" onClick={onCancel} aria-label={t('close')}>×</button></div>
+    <p className="editor-copy">{t('budgetEditorHint')}</p>
+    <form onSubmit={submit}>
+      {fields}
+      <div className="transaction-form-actions"><button className="primary-button" type="submit" disabled={!accounts.length}>{t('saveBudget')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteBudget'))) onDelete(initialBudget.id); }}>{t('deleteBudget')}</button>}</div>
+      <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
+    </form>
+  </section>;
+}
+
+function ActivityPage({ items, allTransactions, categories, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
+  const monthDate = new Date(`${month}-01T12:00:00`);
+  const monthOptions = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monthDate);
+    date.setMonth(monthDate.getMonth() + index - 3);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const nativeTotals = new Map();
+  allTransactions.filter((item) => item.transactionDate.startsWith(month)).forEach((item) => {
+    if (!nativeTotals.has(item.currency)) nativeTotals.set(item.currency, { expense: 0n, income: 0n });
+    nativeTotals.get(item.currency)[item.type] += moneyToCents(item.amount) ?? 0n;
+  });
+  let expense = 0n;
+  let income = 0n;
+  let totalsAvailable = true;
+  for (const [currency, values] of nativeTotals) {
+    const convertedExpense = convertCents(values.expense, currency, reportCurrency, fx.rates);
+    const convertedIncome = convertCents(values.income, currency, reportCurrency, fx.rates);
+    if (convertedExpense === null || convertedIncome === null) {
+      totalsAvailable = false;
+      break;
+    }
+    expense += convertedExpense;
+    income += convertedIncome;
+  }
+  const net = income - expense;
+  const ratesMessage = fx.status === 'loading' ? t('ratesLoading')
+    : (!totalsAvailable || fx.status === 'error') ? t('ratesUnavailable')
+      : fx.stale ? t('ratesCached')
+        : fx.date ? `${t('ratesThrough')} ${fx.date}` : '';
+
+  return (
+    <section className="page-section activity-page">
+      <PageTitle title={t('activity')} detail={t('activityHint')} />
+      <nav className="activity-month-strip" aria-label={t('month')}>
+        {monthOptions.map((value) => {
+          const date = new Date(`${value}-01T12:00:00`);
+          const label = new Intl.DateTimeFormat(locale, { month: 'long' }).format(date);
+          return <button key={value} type="button" className={`activity-month-tab ${value === month ? 'selected' : ''}`} onClick={() => onMonthChange(value)} aria-pressed={value === month} title={value}>{label}</button>;
+        })}
+        <label className="activity-month-picker"><span className="sr-only">{t('month')}</span><input type="month" value={month} onChange={(event) => onMonthChange(event.target.value)} aria-label={t('month')} /></label>
+      </nav>
+      <section className="activity-summary" aria-label={t('activitySummary')}>
+        <div className="activity-currency-controls">
+          <label><span>{t('summaryCurrency')}</span><select value={reportCurrency} onChange={(event) => onReportCurrencyChange(event.target.value)}>{currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select></label>
+          <div className="activity-rates-status"><span>{ratesMessage}</span><button type="button" onClick={onRefreshFx} disabled={fx.status === 'loading'} aria-label={t('refreshRates')} title={t('refreshRates')}>↻</button></div>
+        </div>
+        <div className="activity-summary-row">
+          <span className="activity-stat expense"><small>{t('expense')}</small><strong>{totalsAvailable ? `−${formatCents(expense, locale, reportCurrency)}` : '—'}</strong></span>
+          <span className="activity-stat income"><small>{t('income')}</small><strong>{totalsAvailable ? `+${formatCents(income, locale, reportCurrency)}` : '—'}</strong></span>
+          <span className={`activity-stat net ${net < 0n ? 'negative' : 'positive'}`}><small>{t('balance')}</small><strong>{totalsAvailable ? formatCents(net, locale, reportCurrency) : '—'}</strong></span>
+        </div>
+      </section>
+      <TransactionPanel items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={t('empty')} />
+    </section>
+  );
+}
+
+function TransactionPanel({ items, categories, accounts, t, language, timeFormat, reportCurrency, fxRates, onDelete, onAdd, onEdit, account, emptyMessage }) {
   return (
     <section className="panel transaction-panel">
       <div className="panel-heading">
         <div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div>
         <div className="panel-actions"><span className="count-pill">{items.length} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
       </div>
-      {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} onDelete={onDelete} onEdit={onEdit} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{account ? t('empty') : t('chooseAccountFirst')}</p></div>}
+      {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fxRates} onDelete={onDelete} onEdit={onEdit} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{emptyMessage || (account ? t('empty') : t('chooseAccountFirst'))}</p></div>}
     </section>
   );
 }
 
-function TransactionForm({ account, categories, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateCategory }) {
+function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget }) {
   const [type, setType] = useState(initialTransaction?.type ?? 'expense');
   const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
   const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [addingCategory, setAddingCategory] = useState(false);
+  const [addingBudget, setAddingBudget] = useState(false);
   const [noteImage, setNoteImage] = useState(initialTransaction?.noteImage ?? '');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const transactionTime = initialTransaction
     ? (initialTransaction.transactionTime || '')
     : (openedAt?.transactionTime || '');
-  const choices = categories.filter((item) => item.type === type && !item.archived);
+  const categoryMap = new Map(categories.map((item) => [item.id, item]));
+  const choiceMap = new Map();
+  ['none', 'other'].forEach((name) => {
+    const item = categories.find((category) => category.name.trim().toLocaleLowerCase() === name);
+    if (item) choiceMap.set(item.id, item);
+  });
+  budgets.forEach((budget) => {
+    const id = budget.categoryId || budget.id;
+    const source = categoryMap.get(id);
+    if (id && !choiceMap.has(id)) choiceMap.set(id, { id, name: budget.name || source?.name || t('budgets'), type: 'expense', archived: false });
+  });
+  if (initialTransaction?.categoryId && !choiceMap.has(initialTransaction.categoryId) && categoryMap.has(initialTransaction.categoryId)) {
+    choiceMap.set(initialTransaction.categoryId, categoryMap.get(initialTransaction.categoryId));
+  }
+  const choices = [...choiceMap.values()];
   const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
   const weekday = transactionDate ? new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long' }).format(new Date(`${transactionDate}T12:00:00`)) : '';
-
-  function createCategory() {
-    const name = newCategoryName.trim();
-    if (!name) return;
-    const existing = choices.find((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-    if (existing) {
-      setCategoryId(existing.id);
-    } else {
-      const category = { id: crypto.randomUUID(), name, type, archived: false };
-      onCreateCategory(category);
-      setCategoryId(category.id);
-    }
-    setNewCategoryName('');
-    setAddingCategory(false);
-  }
 
   function chooseNoteImage(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1024 * 1024) {
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) {
       setError(t('imageTypeError'));
       return;
     }
@@ -503,9 +733,9 @@ function TransactionForm({ account, categories, user, t, language, timeFormat, i
           <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /></label>
           <div className="field"><span>{t('category')}</span><div className="category-chip-list" role="group" aria-label={t('category')}>
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
-            <button type="button" className="category-chip category-add-chip" aria-label={t('addCategory')} title={t('addCategory')} onClick={() => { setAddingCategory((current) => !current); setNewCategoryName(''); }}>+</button>
+            <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>
           </div>
-          {addingCategory && <div className="category-add-form"><input type="text" maxLength="50" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); createCategory(); } }} placeholder={t('categoryName')} aria-label={t('categoryName')} /><button type="button" className="secondary-button" onClick={createCategory}>{t('save')}</button></div>}
+          {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} accounts={accounts} defaultAccountId={account.id} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
           </div>
           <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
           <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>
@@ -525,7 +755,7 @@ function confirmDeleteTransaction(id, t, onDelete) {
   if (window.confirm(t('confirmDelete'))) onDelete(id);
 }
 
-function TransactionList({ items, categories, accounts = [], t, language, timeFormat, onDelete, onEdit }) {
+function TransactionList({ items, categories, accounts = [], t, language, timeFormat, reportCurrency, fxRates, onDelete, onEdit }) {
   const [tooltipId, setTooltipId] = useState(null);
   const hoverTimer = useRef(null);
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
@@ -566,7 +796,10 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
               <span className="transaction-tag">{categoryMap.get(item.categoryId) || '\u2014'}</span>
             </div>
           </div>
-          <strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>
+          <div className="transaction-value-group"><strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>{reportCurrency && item.currency !== reportCurrency && (() => {
+            const converted = convertCents(moneyToCents(item.amount) ?? 0n, item.currency, reportCurrency, fxRates);
+            return converted === null ? null : <small className="transaction-converted">≈ {item.type === 'income' ? '+' : '\u2212'}{formatCents(converted, locale, reportCurrency)}</small>;
+          })()}</div>
           <button className="icon-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}>x</button>
           {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong><b className={item.type}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {categoryMap.get(item.categoryId) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
         </article>)}
@@ -587,8 +820,46 @@ function TrendChart({ account, points, t, locale }) {
   const max = Math.max(1, ...points.flatMap((item) => [Number(item.income), Number(item.expense)]));
   const x = (index) => left + index * (chartWidth / (points.length - 1));
   const y = (amount) => top + chartHeight - (Number(amount) / max) * chartHeight;
-  const incomePoints = points.map((item, index) => `${x(index)},${y(item.income)}`).join(' ');
-  const expensePoints = points.map((item, index) => `${x(index)},${y(item.expense)}`).join(' ');
+  const smoothPath = (type) => {
+    const coordinates = points.map((item, index) => ({ x: x(index), y: y(item[type]) }));
+    if (coordinates.length === 0) return '';
+    if (coordinates.length === 1) return `M ${coordinates[0].x} ${coordinates[0].y}`;
+    const slopes = coordinates.slice(0, -1).map((point, index) =>
+      (coordinates[index + 1].y - point.y) / (coordinates[index + 1].x - point.x));
+    const tangents = coordinates.map((_, index) => {
+      if (index === 0) return slopes[0];
+      if (index === coordinates.length - 1) return slopes.at(-1);
+      const previous = slopes[index - 1];
+      const next = slopes[index];
+      return previous * next <= 0 ? 0 : (2 * previous * next) / (previous + next);
+    });
+
+    for (let index = 0; index < slopes.length; index += 1) {
+      const slope = slopes[index];
+      if (slope === 0) {
+        tangents[index] = 0;
+        tangents[index + 1] = 0;
+        continue;
+      }
+      const alpha = tangents[index] / slope;
+      const beta = tangents[index + 1] / slope;
+      const magnitude = alpha * alpha + beta * beta;
+      if (magnitude > 9) {
+        const scale = 3 / Math.sqrt(magnitude);
+        tangents[index] = scale * alpha * slope;
+        tangents[index + 1] = scale * beta * slope;
+      }
+    }
+
+    return coordinates.slice(1).reduce((path, current, index) => {
+      const previous = coordinates[index];
+      const segmentWidth = current.x - previous.x;
+      const control1 = { x: previous.x + segmentWidth / 3, y: previous.y + tangents[index] * segmentWidth / 3 };
+      const control2 = { x: current.x - segmentWidth / 3, y: current.y - tangents[index + 1] * segmentWidth / 3 };
+      const start = index === 0 ? `M ${previous.x} ${previous.y}` : path;
+      return `${start} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${current.x} ${current.y}`;
+    }, '');
+  };
   const ticks = [0, max / 2, max];
   const formatTick = (cents) => formatCents(BigInt(Math.round(cents)), locale, account.currency);
   return (
@@ -601,8 +872,8 @@ function TrendChart({ account, points, t, locale }) {
             const yy = y(BigInt(Math.round(tick)));
             return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} className="chart-gridline" /><text x={left - 9} y={yy + 4} textAnchor="end" className="chart-axis-label">{formatTick(tick)}</text></g>;
           })}
-          <polyline points={incomePoints} className="chart-line income-line" />
-          <polyline points={expensePoints} className="chart-line expense-line" />
+          <path d={smoothPath('income')} className="chart-line income-line" />
+          <path d={smoothPath('expense')} className="chart-line expense-line" />
           {points.map((point, index) => <g key={point.date}>
             <circle cx={x(index)} cy={y(point.income)} r="4" className="chart-point income-point" />
             <circle cx={x(index)} cy={y(point.expense)} r="4" className="chart-point expense-point" />
@@ -697,7 +968,7 @@ function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, onUserU
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1024 * 1024) {
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) {
       setError(t('avatarTypeError'));
       return;
     }
@@ -764,7 +1035,7 @@ function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, onUserU
                 <label className="avatar-change-button">{t('changeAvatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={changeAvatar} aria-label={t('changeAvatar')} /></label>
               </div>
               <div className="profile-details">
-                {user && <><p className="profile-email">{user.email}</p><small>{t('roleUser')} ? {user.baseCurrency}</small></>}
+                {user && <><p className="profile-email">{user.email}</p><small>{t('roleUser')} · {user.baseCurrency}</small></>}
                 <label className="field"><span>{t('username')}</span><input type="text" maxLength="60" value={user ? profileDraft.username : anonymousProfile.username} onChange={(event) => updateProfileField('username', event.target.value)} /></label>
                 <p className="profile-hint">{t(user ? 'profileAccountEditHint' : 'profileEditHint')}</p>
               </div>

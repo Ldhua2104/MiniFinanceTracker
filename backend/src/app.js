@@ -9,7 +9,7 @@ import { authRouter } from './routes/auth.routes.js';
 
 export const app = express();
 app.disable('x-powered-by');
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '8mb' }));
 app.use(cookieParser());
 app.use((req, res, next) => {
   req.requestId = randomUUID();
