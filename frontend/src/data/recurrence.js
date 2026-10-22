@@ -1,5 +1,5 @@
 const AUTO_NOTE = '\u6bcf\u6708\u81ea\u52a8\u6dfb\u52a0\u81ea\u52a8\u6dfb\u52a0\uff0c\u91d1\u989d\u53d8\u52a8\uff1a';
-const SCHEDULES = new Set(['month-start', 'month-end', 'custom']);
+const SCHEDULES = new Set(['month-start', 'month-end', 'same-day', 'custom']);
 
 function formatDate(year, monthIndex, day) {
   const date = new Date(year, monthIndex, day, 12);
@@ -19,8 +19,8 @@ export function nextMonthlyDate(referenceDate, schedule, dayOfMonth = 1) {
 
 export function makeMonthlyRecurrence(schedule, dayOfMonth, time, fromDate) {
   if (!SCHEDULES.has(schedule) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time || '')) return null;
-  const day = schedule === 'custom' ? Number(dayOfMonth) : undefined;
-  if (schedule === 'custom' && (!Number.isInteger(day) || day < 1 || day > 31)) return null;
+  const day = ['custom', 'same-day'].includes(schedule) ? Number(dayOfMonth) : undefined;
+  if (['custom', 'same-day'].includes(schedule) && (!Number.isInteger(day) || day < 1 || day > 31)) return null;
   return {
     enabled: true,
     schedule,

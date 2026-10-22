@@ -790,13 +790,15 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
     if (monthlyAuto && !window.confirm(t('confirmMonthlyAutoAdd'))) return;
     let recurring;
     if (monthlyAuto) {
+      const recurringDay = recurrenceSchedule === 'same-day' ? Number(transactionDate.slice(-2)) : Number(recurrenceDay);
+      const recurringTimeValue = recurrenceSchedule === 'custom' ? recurrenceTime : (transactionTime || '09:00');
       const sameRule = initialTransaction?.recurring?.enabled
         && initialTransaction.recurring.schedule === recurrenceSchedule
-        && Number(initialTransaction.recurring.dayOfMonth || 0) === (recurrenceSchedule === 'custom' ? Number(recurrenceDay) : 0)
-        && initialTransaction.recurring.time === (recurrenceSchedule === 'custom' ? recurrenceTime : transactionTime);
+        && Number(initialTransaction.recurring.dayOfMonth || 0) === (['custom', 'same-day'].includes(recurrenceSchedule) ? recurringDay : 0)
+        && initialTransaction.recurring.time === recurringTimeValue;
       recurring = sameRule
         ? initialTransaction.recurring
-        : makeMonthlyRecurrence(recurrenceSchedule, recurrenceDay, recurrenceSchedule === 'custom' ? recurrenceTime : transactionTime || '09:00', today());
+        : makeMonthlyRecurrence(recurrenceSchedule, recurringDay, recurringTimeValue, today());
       if (!recurring) return setError(t('fieldRequired'));
     } else if (initialTransaction?.recurring) {
       recurring = { ...initialTransaction.recurring, enabled: false };
@@ -860,7 +862,7 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
           {!isGeneratedOccurrence && <div className="field recurring-field">
             <label className="recurring-toggle"><input type="checkbox" checked={monthlyAuto} onChange={(event) => setMonthlyAuto(event.target.checked)} /><span>{t('monthlyAutoAdd')}</span></label>
             {monthlyAuto && <div className="recurring-options">
-              <label className="field"><span>{t('recurrenceTiming')}</span><select value={recurrenceSchedule} onChange={(event) => setRecurrenceSchedule(event.target.value)}><option value="month-start">{t('monthStart')}</option><option value="month-end">{t('monthEnd')}</option><option value="custom">{t('customTime')}</option></select></label>
+              <label className="field"><span>{t('recurrenceTiming')}</span><select value={recurrenceSchedule} onChange={(event) => setRecurrenceSchedule(event.target.value)}><option value="month-start">{t('monthStart')}</option><option value="month-end">{t('monthEnd')}</option><option value="same-day">{t('sameDayMonthly')}</option><option value="custom">{t('customTime')}</option></select></label>
               {recurrenceSchedule === 'custom' && <div className="recurring-custom-fields"><label className="field"><span>{t('dayOfMonth')}</span><input type="number" min="1" max="31" value={recurrenceDay} onChange={(event) => setRecurrenceDay(event.target.value)} required /></label><label className="field"><span>{t('recurrenceTime')}</span><input type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} required /></label></div>}
               <small>{t('monthlyAutoAddHint')}</small>
             </div>}

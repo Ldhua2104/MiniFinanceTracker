@@ -24,14 +24,14 @@ const loginInput = z.object({
 }).strict();
 const recurringInput = z.object({
   enabled: z.boolean(),
-  schedule: z.enum(['month-start', 'month-end', 'custom']).optional(),
+  schedule: z.enum(['month-start', 'month-end', 'same-day', 'custom']).optional(),
   dayOfMonth: z.number().int().min(1).max(31).optional(),
   time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
   nextRunDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
 }).strict().superRefine((rule, context) => {
   if (!rule.enabled) return;
   if (!rule.schedule || !rule.time || !rule.nextRunDate) context.addIssue({ code: 'custom', message: 'Enabled recurring transactions require a schedule, time and next run date' });
-  if (rule.schedule === 'custom' && !rule.dayOfMonth) context.addIssue({ code: 'custom', path: ['dayOfMonth'], message: 'Custom recurrence requires a day of month' });
+  if (['custom', 'same-day'].includes(rule.schedule) && !rule.dayOfMonth) context.addIssue({ code: 'custom', path: ['dayOfMonth'], message: 'This recurrence requires a day of month' });
 });
 
 const workspaceInput = z.object({
