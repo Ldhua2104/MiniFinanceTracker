@@ -231,6 +231,10 @@ export function App() {
     setRightEditor(null);
   }
 
+  function addTransactionAccount(account) {
+    setWorkspace((current) => ({ ...current, accounts: [...current.accounts, account] }));
+  }
+
   function openBudgetEditor(budget = null) {
     setEditingBudget(budget);
     setRightEditor('budget');
@@ -382,7 +386,7 @@ export function App() {
           ) : rightEditor === 'budget' ? (
             <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} defaultCurrency={workspace.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
-            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={workspace.accounts} categories={workspace.categories} budgets={workspace.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={() => setRightEditor('account')} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} />
+            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={workspace.accounts} categories={workspace.categories} budgets={workspace.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} />
           ) : (
             <>
               <div className="right-card account-card">
@@ -427,7 +431,7 @@ function AccountCard({ account, selected, transactions, locale, onSelect }) {
   );
 }
 
-function AccountForm({ t, onCancel, onSubmit }) {
+function AccountForm({ t, onCancel, onSubmit, embedded = false }) {
   const [currency, setCurrency] = useState('USD');
   const [error, setError] = useState('');
   function submit(event) {
@@ -439,15 +443,24 @@ function AccountForm({ t, onCancel, onSubmit }) {
     setError('');
     onSubmit({ id: crypto.randomUUID(), name, currency, openingBalance: centsToAmount(moneyToCents(openingBalance)) });
   }
+  const fields = <>
+    <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" autoFocus={!embedded} required /></label>
+    <label className="field"><span>{t('openingBalance')}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></label>
+    <label className="field"><span>{t('currency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label>
+    {error && <div className="inline-error">{error}</div>}
+  </>;
+
+  if (embedded) return <section className="inline-account-editor">
+    <div className="inline-budget-heading"><strong>{t('addAccount')}</strong><button type="button" className="text-button" onClick={onCancel} aria-label={t('close')}>×</button></div>
+    <form onSubmit={submit}>{fields}<button className="primary-button" type="submit">{t('saveAccount')} <span>+</span></button></form>
+  </section>;
+
   return (
     <section className="panel side-editor">
       <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t('addAccount')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
       <p className="editor-copy">{t('accountSetupHint')}</p>
       <form onSubmit={submit}>
-        <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" autoFocus required /></label>
-        <label className="field"><span>{t('openingBalance')}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></label>
-        <label className="field"><span>{t('currency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label>
-        {error && <div className="inline-error">{error}</div>}
+        {fields}
         <button className="primary-button" type="submit">{t('saveAccount')} <span>+</span></button>
         <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
       </form>
@@ -680,6 +693,9 @@ function TransactionPanel({ items, categories, accounts, t, language, timeFormat
 }
 
 function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget }) {
+  const [accountId, setAccountId] = useState(initialTransaction?.accountId ?? account?.id ?? accounts[0]?.id ?? '');
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
+  const [addingAccount, setAddingAccount] = useState(false);
   const [type, setType] = useState(initialTransaction?.type ?? 'expense');
   const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
   const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
@@ -690,6 +706,7 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
   const transactionTime = initialTransaction
     ? (initialTransaction.transactionTime || '')
     : (openedAt?.transactionTime || '');
+  const selectedAccount = accounts.find((item) => item.id === accountId) ?? account ?? accounts[0] ?? null;
   const categoryMap = new Map(categories.map((item) => [item.id, item]));
   const choiceMap = new Map();
   ['none', 'other'].forEach((name) => {
@@ -701,9 +718,6 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
     const source = categoryMap.get(id);
     if (id && !choiceMap.has(id)) choiceMap.set(id, { id, name: budget.name || source?.name || t('budgets'), type: 'expense', archived: false });
   });
-  if (initialTransaction?.categoryId && !choiceMap.has(initialTransaction.categoryId) && categoryMap.has(initialTransaction.categoryId)) {
-    choiceMap.set(initialTransaction.categoryId, categoryMap.get(initialTransaction.categoryId));
-  }
   const choices = [...choiceMap.values()];
   const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
   const weekday = transactionDate ? new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long' }).format(new Date(`${transactionDate}T12:00:00`)) : '';
@@ -729,7 +743,7 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
 
   async function submit(event) {
     event.preventDefault();
-    if (!account || working) return;
+    if (!selectedAccount || working) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const title = String(form.get('title') ?? '').trim();
@@ -751,8 +765,8 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
         noteImagePath = noteImage;
       }
       onSubmit({
-        id: initialTransaction?.id ?? crypto.randomUUID(), type, amount: centsToAmount(cents), currency: account.currency,
-        accountId: account.id, categoryId: selectedCategoryId,
+        id: initialTransaction?.id ?? crypto.randomUUID(), type, amount: centsToAmount(cents), currency: selectedAccount.currency,
+        accountId: selectedAccount.id, categoryId: selectedCategoryId,
         title,
         transactionDate, transactionTime, note: String(form.get('note') ?? '').trim(),
         ...(user && noteImagePath ? { noteImage: noteImagePath } : {})
@@ -767,19 +781,29 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
   }
 
   return (
-    <section className="panel side-editor">
-      <div className="editor-heading"><div className="editor-heading-title"><div className="eyebrow">{t('activity')}</div><h2>{initialTransaction ? t('editTransaction') : t('newTransaction')}</h2></div><div className="editor-heading-side"><div className="editor-time"><strong>{formatTransactionTime(transactionTime, timeFormat, language)}</strong></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>x</button></div></div>
-      {!account ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></div> : <>
-        <div className="editing-account"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><div><strong>{account.name}</strong><small>{account.currency}</small></div></div>
+    <section className="panel side-editor transaction-editor">
+      <div className="editor-heading"><div className="editor-heading-title"><div className="eyebrow">{t('activity')}</div><h2>{initialTransaction ? t('editTransaction') : t('newTransaction')}</h2></div><div className="editor-heading-side"><div className="editor-time"><strong>{formatTransactionTime(transactionTime, timeFormat, language)}</strong></div></div></div>
+      <button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>×</button>
+      {!selectedAccount ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" type="button" onClick={() => setAddingAccount(true)}>{t('createFirstAccount')}</button>{addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); }} />}</div> : <>
+        <div className="transaction-account-switcher">
+          <button className="editing-account account-switch-trigger" type="button" aria-expanded={accountPickerOpen} onClick={() => { setAccountPickerOpen((current) => !current); setAddingAccount(false); }}>
+            <span className="account-glyph">{selectedAccount.name.slice(0, 1).toUpperCase()}</span><span className="editing-account-copy"><strong>{selectedAccount.name}</strong><small>{selectedAccount.currency}</small></span><span className="account-switch-chevron" aria-hidden="true">{accountPickerOpen ? '⌃' : '⌄'}</span>
+          </button>
+          {accountPickerOpen && <div className="transaction-account-options" role="group" aria-label={t('account')}>
+            {accounts.map((item) => <button key={item.id} type="button" className={`transaction-account-option ${item.id === selectedAccount.id ? 'selected' : ''}`} aria-pressed={item.id === selectedAccount.id} onClick={() => { setAccountId(item.id); setAccountPickerOpen(false); }}><strong>{item.name}</strong><small>{item.currency}</small></button>)}
+            <button type="button" className="transaction-account-option transaction-account-add" aria-label={t('addAccount')} title={t('addAccount')} onClick={() => setAddingAccount(true)}>+</button>
+          </div>}
+          {addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); setAccountPickerOpen(false); }} />}
+        </div>
         <form onSubmit={submit}>
           <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); }}>{t('incomeType')}</button></div></label>
           <label className="field"><span>{t('titleLabel')}</span><input name="title" type="text" maxLength="100" defaultValue={initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || ''} required autoFocus /></label>
-          <label className="field"><span>{t('amount')}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /></label>
-          <div className="field"><span>{t('category')}</span><div className="category-chip-list" role="group" aria-label={t('category')}>
+          <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /><span>{selectedAccount.currency}</span></div></label>
+          <div className="field"><span>{t('budgets')}</span><div className="category-chip-list" role="group" aria-label={t('budgets')}>
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
             <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>
           </div>
-          {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} defaultCurrency={account.currency} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
+          {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} defaultCurrency={selectedAccount.currency} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
           </div>
           <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
           <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>

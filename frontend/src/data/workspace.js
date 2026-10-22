@@ -51,7 +51,7 @@ export function ensureStarterCategories(workspace) {
     accounts: workspace.accounts ?? [],
     categories: workspace.categories?.length
       ? [
-          ...workspace.categories.map((item) => item.name === 'Transport' ? { ...item, name: 'Transportation' } : item),
+          ...workspace.categories,
           ...(workspace.categories.some((item) => item.name.toLowerCase() === 'none') ? [] : [{ id: crypto.randomUUID(), name: 'None', type: 'expense', archived: false }]),
           ...(workspace.categories.some((item) => item.name.toLowerCase() === 'other') ? [] : [{ id: crypto.randomUUID(), name: 'Other', type: 'expense', archived: false }])
         ]

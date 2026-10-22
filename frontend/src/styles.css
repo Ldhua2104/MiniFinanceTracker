@@ -1356,6 +1356,10 @@ h2 {
 }
 .budget-editor .close-editor { color: #bf5148; }
 .budget-editor .close-editor:hover { background: #fde9e6; color: #a53e37; }
+.editor-heading-side .close-editor { color: #bf5148; }
+.editor-heading-side .close-editor:hover { background: #fde9e6; color: #a53e37; }
+.transaction-editor .close-editor { position: absolute; top: 8px; right: 10px; z-index: 2; width: 25px; height: 25px; color: #bf5148; }
+.transaction-editor .close-editor:hover { background: #fde9e6; color: #a53e37; }
 
 .editor-copy {
     margin: 0 0 20px;
@@ -1399,6 +1403,22 @@ h2 {
     color: var(--muted);
     font-size: 9px;
 }
+.transaction-account-switcher { margin: 15px 0 19px; }
+.transaction-account-switcher .editing-account { width: 100%; margin: 0; border: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.editing-account-copy { display: grid; flex: 1 1 auto; gap: 3px; min-width: 0; }
+.editing-account-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-switch-chevron { color: var(--muted); font-size: 14px; }
+.transaction-account-options { display: flex; gap: 8px; overflow-x: auto; margin-top: 8px; padding: 2px 1px 8px; scrollbar-color: var(--line) transparent; scrollbar-width: thin; }
+.transaction-account-option { display: grid; flex: 0 0 auto; gap: 3px; min-width: 82px; max-width: 160px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.transaction-account-option strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.transaction-account-option small { color: var(--muted); font-size: 9px; }
+.transaction-account-option.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark); }
+.transaction-account-add { place-items: center; min-width: 42px; border-style: dashed; color: var(--accent-dark); font-size: 18px; }
+.inline-account-editor { margin-top: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.inline-account-editor .field { margin-bottom: 11px; }
+.inline-account-editor .primary-button { width: 100%; min-height: 36px; margin-top: 3px; }
+.transaction-amount-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px; }
+.transaction-amount-input > span { color: var(--accent-dark); font-size: 11px; font-weight: 650; }
 
 .empty-editor {
     display: grid;
