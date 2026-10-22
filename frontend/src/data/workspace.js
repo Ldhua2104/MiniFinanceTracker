@@ -134,16 +134,15 @@ export function moneyToCents(value) {
   return BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'));
 }
 
+export function currencySymbol(currency) {
+  return ({ USD: '$', EUR: '\u20ac', CNY: '\uffe5', GBP: '\u00a3' })[currency] ?? currency;
+}
+
 export function formatCents(cents, locale, currency) {
   const negative = cents < 0n;
   const absolute = negative ? -cents : cents;
   const whole = absolute / 100n;
   const fraction = String(absolute % 100n).padStart(2, '0');
-  const formatter = new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const parts = formatter.formatToParts(negative ? (whole === 0n ? -1n : -whole) : whole);
-  return parts.map((part) => {
-    if (part.type === 'fraction') return fraction;
-    if (negative && whole === 0n && part.type === 'integer') return '0';
-    return part.value;
-  }).join('');
+  const formatter = new Intl.NumberFormat(locale, { useGrouping: true, minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return `${negative ? '-' : ''}${currencySymbol(currency)}${formatter.format(whole)}.${fraction}`;
 }

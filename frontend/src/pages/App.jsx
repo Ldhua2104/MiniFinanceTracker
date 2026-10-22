@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import { convertCents, fetchLatestFxRates } from '../api/exchange-rates.js';
 import {
-  clearAnonymousWorkspace, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
+  clearAnonymousWorkspace, currencySymbol, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
   loadServerWorkspace, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerWorkspace
 } from '../data/workspace.js';
 import { makeMonthlyRecurrence, materializeDueRecurringTransactions } from '../data/recurrence.js';
@@ -58,6 +58,12 @@ function makeTrend(account, transactions, language) {
 
 function centsToAmount(cents) {
   return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
+}
+
+function formatSignedCents(cents, locale, currency, sign) {
+  const isNegative = cents < 0n;
+  const absolute = isNegative ? -cents : cents;
+  return `${sign ?? (isNegative ? '-' : '+')}${formatCents(absolute, locale, currency)}`;
 }
 
 export function App() {
@@ -435,7 +441,7 @@ function AccountCard({ account, selected, transactions, locale, onSelect }) {
     <button className={`account-card-option ${selected ? 'selected' : ''}`} onClick={onSelect}>
       <span className="account-card-top"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><span className="account-currency">{account.currency}</span></span>
       <span className="account-name">{account.name}</span>
-      <strong>{formatCents(balance, locale, account.currency)}</strong>
+      <strong>{formatSignedCents(balance, locale, account.currency)}</strong>
     </button>
   );
 }
@@ -454,7 +460,7 @@ function AccountForm({ t, onCancel, onSubmit, embedded = false }) {
   }
   const fields = <>
     <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" autoFocus={!embedded} required /></label>
-    <label className="field"><span>{t('openingBalance')}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></label>
+    <label className="field"><span>{t('openingBalance')}</span><div className="transaction-amount-input"><span>{currencySymbol(currency)}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></div></label>
     <label className="field"><span>{t('currency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label>
     {error && <div className="inline-error">{error}</div>}
   </>;
@@ -573,7 +579,7 @@ function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD
   const fields = <>
     <label className="field"><span>{t('budgetName')}</span><input name="budgetName" type="text" maxLength="60" value={name} onChange={(event) => setName(event.target.value)} autoFocus={!embedded} required /></label>
     <label className="field"><span>{t('defaultCurrency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-    <label className="field"><span>{t('monthlyAvailable')}</span><div className="budget-amount-input"><input name="budgetAmount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /><span>{currency}</span></div></label>
+    <label className="field"><span>{t('monthlyAvailable')}</span><div className="budget-amount-input"><span>{currencySymbol(currency)}</span><input name="budgetAmount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></div></label>
     <div className="field"><span>{t('budgetCardColor')}</span><div className="budget-color-picker" role="group" aria-label={t('budgetCardColor')}>
       {budgetColors.map((value) => <button key={value} type="button" className={`budget-color-swatch ${color === value ? 'selected' : ''}`} style={{ '--swatch-color': value }} onClick={() => setColor(value)} aria-label={value} aria-pressed={color === value} />)}
     </div></div>
@@ -675,9 +681,9 @@ function ActivityPage({ items, allTransactions, categories, budgets, accounts, m
           <div className="activity-rates-status"><span>{ratesMessage}</span><button type="button" onClick={onRefreshFx} disabled={fx.status === 'loading'} aria-label={t('refreshRates')} title={t('refreshRates')}>↻</button></div>
         </div>
         <div className="activity-summary-row">
-          <span className="activity-stat expense"><small>{t('expense')}</small><strong>{totalsAvailable ? `−${formatCents(expense, locale, reportCurrency)}` : '—'}</strong></span>
-          <span className="activity-stat income"><small>{t('income')}</small><strong>{totalsAvailable ? `+${formatCents(income, locale, reportCurrency)}` : '—'}</strong></span>
-          <span className={`activity-stat net ${net < 0n ? 'negative' : 'positive'}`}><small>{t('balance')}</small><strong>{totalsAvailable ? formatCents(net, locale, reportCurrency) : '—'}</strong></span>
+        <span className="activity-stat expense"><small>{t('expense')}</small><strong>{totalsAvailable ? formatSignedCents(expense, locale, reportCurrency, '-') : '—'}</strong></span>
+        <span className="activity-stat income"><small>{t('income')}</small><strong>{totalsAvailable ? formatSignedCents(income, locale, reportCurrency, '+') : '—'}</strong></span>
+        <span className={`activity-stat net ${net < 0n ? 'negative' : 'positive'}`}><small>{t('balance')}</small><strong>{totalsAvailable ? formatSignedCents(net, locale, reportCurrency) : '—'}</strong></span>
         </div>
       </section>
       <details className="activity-filters" open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)}>
@@ -851,7 +857,7 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
         <form onSubmit={submit}>
           <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); setAddingBudget(false); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); setAddingBudget(false); }}>{t('incomeType')}</button></div></label>
           <label className="field"><span>{t('titleLabel')}</span><input name="title" type="text" maxLength="100" defaultValue={initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || ''} required autoFocus /></label>
-          <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /><span>{selectedAccount.currency}</span></div></label>
+          <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><span>{currencySymbol(selectedAccount.currency)}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /></div></label>
           <div className="field"><span>{type === 'expense' ? t('budgets') : t('source')}</span><div className="category-chip-list" role="group" aria-label={type === 'expense' ? t('budgets') : t('source')}>
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{type === 'income' ? incomeSourceLabel(item.name, t) : item.name}</button>)}
             {type === 'expense' && <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>}
@@ -919,7 +925,6 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
       {groups.map((group) => <section className="transaction-date-group" key={group.date}>
         <h3>{formatGroupDate(group.date)}</h3>
         {group.items.map((item) => <article className={`transaction-row ${tooltipId === item.id ? 'tooltip-visible' : ''}`} key={item.id} role="button" tabIndex={0} onMouseEnter={() => startTooltip(item.id)} onMouseLeave={stopTooltip} onClick={() => onEdit(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item); } }}>
-          <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}</span>
           <div className="transaction-info">
             <strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong>
             {item.noteImage && <img className="transaction-note-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
@@ -930,12 +935,12 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
               {(item.recurring?.enabled || item.recurrenceSourceId) && <span className="transaction-recurring-mark" title={t('monthlyAutoAdd')} aria-label={t('monthlyAutoAdd')}><span aria-hidden="true">{'\u21bb'}</span>{t('monthlyAutoAdd')}</span>}
             </div>
           </div>
-          <div className="transaction-value-group"><strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>{reportCurrency && item.currency !== reportCurrency && (() => {
+          <div className="transaction-value-group"><strong className={`transaction-value ${item.type}`}>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, item.type === 'income' ? '+' : '-')}</strong>{reportCurrency && item.currency !== reportCurrency && (() => {
             const converted = convertCents(moneyToCents(item.amount) ?? 0n, item.currency, reportCurrency, fxRates);
-            return converted === null ? null : <small className="transaction-converted">≈ {item.type === 'income' ? '+' : '\u2212'}{formatCents(converted, locale, reportCurrency)}</small>;
+            return converted === null ? null : <small className="transaction-converted">{formatSignedCents(converted, locale, reportCurrency, item.type === 'income' ? '+' : '-')}</small>;
           })()}</div>
           <button className="transaction-delete-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg></button>
-          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong><b className={item.type}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
+          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong><b className={item.type}>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, item.type === 'income' ? '+' : '-')}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
         </article>)}
       </section>)}
     </div>
