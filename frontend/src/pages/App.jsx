@@ -597,7 +597,7 @@ function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD
 }
 
 function ActivityPage({ items, allTransactions, categories, budgets, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
-  const [filters, setFilters] = useState({ startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '' });
+  const [filters, setFilters] = useState({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const monthDate = new Date(`${month}-01T12:00:00`);
   const monthOptions = Array.from({ length: 7 }, (_, index) => {
@@ -629,13 +629,19 @@ function ActivityPage({ items, allTransactions, categories, budgets, accounts, m
       : fx.stale ? t('ratesCached')
         : fx.date ? `${t('ratesThrough')} ${fx.date}` : '';
   const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
+  const incomeSources = categories.filter((category) => category.type === 'income');
   const minimum = filters.minimum ? moneyToCents(filters.minimum) : null;
   const maximum = filters.maximum ? moneyToCents(filters.maximum) : null;
   const filteredItems = items.filter((item) => {
+    if (filters.type && item.type !== filters.type) return false;
     if (filters.startDate && item.transactionDate < filters.startDate) return false;
     if (filters.endDate && item.transactionDate > filters.endDate) return false;
-    if (filters.accountId && item.accountId !== filters.accountId) return false;
-    if (filters.budgetId) {
+    const isAutoAdded = Boolean(item.recurring?.enabled || item.recurrenceSourceId);
+    if (filters.autoAdd === 'automatic' && !isAutoAdded) return false;
+    if (filters.autoAdd === 'manual' && isAutoAdded) return false;
+    if (filters.type !== 'income' && filters.accountId && item.accountId !== filters.accountId) return false;
+    if (filters.type === 'income' && filters.sourceId && item.categoryId !== filters.sourceId) return false;
+    if (filters.type !== 'income' && filters.budgetId) {
       const budget = budgets.find((entry) => entry.id === filters.budgetId);
       const categoryMatches = budget?.categoryId
         ? item.categoryId === budget.categoryId
@@ -677,12 +683,15 @@ function ActivityPage({ items, allTransactions, categories, budgets, accounts, m
       <details className="activity-filters" open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)}>
         <summary>{t('filterTransactions')}{activeFilterCount > 0 && <span className="activity-filter-count">{activeFilterCount}</span>}</summary>
         <div className="activity-filter-grid">
+          <label className="activity-filter-field"><span>{t('transactionType')}</span><select value={filters.type} onChange={(event) => { const type = event.target.value; setFilters((current) => ({ ...current, type, budgetId: '', accountId: '', sourceId: '' })); }}><option value="">{t('allTransactionTypes')}</option><option value="expense">{t('expenseType')}</option><option value="income">{t('incomeType')}</option></select></label>
           <div className="activity-filter-field"><span>{t('dateRange')}</span><div className="activity-filter-range"><input aria-label={t('startDate')} type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} /><input aria-label={t('endDate')} type="date" value={filters.endDate} onChange={(event) => setFilters((current) => ({ ...current, endDate: event.target.value }))} /></div></div>
           <div className="activity-filter-field"><span>{t('amountRange')} · {reportCurrency}</span><div className="activity-filter-range"><input aria-label={t('minimumAmount')} type="number" min="0" step="0.01" placeholder={t('minimumAmount')} value={filters.minimum} onChange={(event) => setFilters((current) => ({ ...current, minimum: event.target.value }))} /><input aria-label={t('maximumAmount')} type="number" min="0" step="0.01" placeholder={t('maximumAmount')} value={filters.maximum} onChange={(event) => setFilters((current) => ({ ...current, maximum: event.target.value }))} /></div></div>
-          <label className="activity-filter-field"><span>{t('filterBudget')}</span><select value={filters.budgetId} onChange={(event) => setFilters((current) => ({ ...current, budgetId: event.target.value }))}><option value="">{t('allBudgets')}</option>{budgets.map((budget) => <option key={budget.id} value={budget.id}>{budget.name || categoryMap.get(budget.categoryId) || t('budgets')}</option>)}</select></label>
-          <label className="activity-filter-field"><span>{t('filterAccount')}</span><select value={filters.accountId} onChange={(event) => setFilters((current) => ({ ...current, accountId: event.target.value }))}><option value="">{t('allAccounts')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label>
+          {filters.type === 'income' && <label className="activity-filter-field"><span>{t('filterIncomeSource')}</span><select value={filters.sourceId} onChange={(event) => setFilters((current) => ({ ...current, sourceId: event.target.value }))}><option value="">{t('allSources')}</option>{incomeSources.map((source) => <option key={source.id} value={source.id}>{incomeSourceLabel(source.name, t)}</option>)}</select></label>}
+          {filters.type !== 'income' && <><label className="activity-filter-field"><span>{t('filterBudget')}</span><select value={filters.budgetId} onChange={(event) => setFilters((current) => ({ ...current, budgetId: event.target.value }))}><option value="">{t('allBudgets')}</option>{budgets.map((budget) => <option key={budget.id} value={budget.id}>{budget.name || categoryMap.get(budget.categoryId) || t('budgets')}</option>)}</select></label>
+          <label className="activity-filter-field"><span>{t('filterAccount')}</span><select value={filters.accountId} onChange={(event) => setFilters((current) => ({ ...current, accountId: event.target.value }))}><option value="">{t('allAccounts')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label></>}
+          <label className="activity-filter-field"><span>{t('filterAutoAdd')}</span><select value={filters.autoAdd} onChange={(event) => setFilters((current) => ({ ...current, autoAdd: event.target.value }))}><option value="">{t('allRecurringTypes')}</option><option value="automatic">{t('recurringOnly')}</option><option value="manual">{t('nonRecurringOnly')}</option></select></label>
         </div>
-        {activeFilterCount > 0 && <button type="button" className="activity-filter-clear" onClick={() => setFilters({ startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '' })}>{t('clearFilters')}</button>}
+        {activeFilterCount > 0 && <button type="button" className="activity-filter-clear" onClick={() => setFilters({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' })}>{t('clearFilters')}</button>}
       </details>
       <TransactionPanel items={filteredItems} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={activeFilterCount ? t('noMatchingTransactions') : t('empty')} />
     </section>
