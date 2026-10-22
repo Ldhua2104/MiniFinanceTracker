@@ -5,6 +5,7 @@ import {
   clearAnonymousWorkspace, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
   loadServerWorkspace, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerWorkspace
 } from '../data/workspace.js';
+import { makeMonthlyRecurrence, materializeDueRecurringTransactions } from '../data/recurrence.js';
 import { detectLanguage, saveLanguage, translate } from '../i18n.js';
 
 const APP_ROLES = Object.freeze({ anonymous: 'anonymous', user: 'user' });
@@ -157,6 +158,14 @@ export function App() {
     }, 450);
     return () => clearTimeout(timer);
   }, [workspace, role, workspaceReady]);
+
+  useEffect(() => {
+    if (!workspaceReady) return undefined;
+    const materialize = () => setWorkspace((current) => materializeDueRecurringTransactions(current, today()));
+    materialize();
+    const timer = window.setInterval(materialize, 60_000);
+    return () => window.clearInterval(timer);
+  }, [workspaceReady]);
 
   useEffect(() => {
     if (!workspace.accounts.length) setSelectedAccountId(null);
@@ -704,10 +713,15 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
   const [type, setType] = useState(initialTransaction?.type ?? 'expense');
   const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
   const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
+  const [monthlyAuto, setMonthlyAuto] = useState(Boolean(initialTransaction?.recurring?.enabled));
+  const [recurrenceSchedule, setRecurrenceSchedule] = useState(initialTransaction?.recurring?.schedule ?? 'month-start');
+  const [recurrenceDay, setRecurrenceDay] = useState(String(initialTransaction?.recurring?.dayOfMonth ?? Number((initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today()).slice(-2))));
+  const [recurrenceTime, setRecurrenceTime] = useState(initialTransaction?.recurring?.time ?? initialTransaction?.transactionTime ?? openedAt?.transactionTime ?? '09:00');
   const [addingBudget, setAddingBudget] = useState(false);
   const [noteImage, setNoteImage] = useState(initialTransaction?.noteImage ?? '');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const isGeneratedOccurrence = Boolean(initialTransaction?.recurrenceSourceId);
   const transactionTime = initialTransaction
     ? (initialTransaction.transactionTime || '')
     : (openedAt?.transactionTime || '');
@@ -764,6 +778,20 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
     if (!title) return setError(t('fieldRequired'));
     if (!cents || cents <= 0n) return setError(t('fieldRequired'));
     if (!selectedCategoryId) return setError(t('fieldRequired'));
+    if (monthlyAuto && !window.confirm(t('confirmMonthlyAutoAdd'))) return;
+    let recurring;
+    if (monthlyAuto) {
+      const sameRule = initialTransaction?.recurring?.enabled
+        && initialTransaction.recurring.schedule === recurrenceSchedule
+        && Number(initialTransaction.recurring.dayOfMonth || 0) === (recurrenceSchedule === 'custom' ? Number(recurrenceDay) : 0)
+        && initialTransaction.recurring.time === (recurrenceSchedule === 'custom' ? recurrenceTime : transactionTime);
+      recurring = sameRule
+        ? initialTransaction.recurring
+        : makeMonthlyRecurrence(recurrenceSchedule, recurrenceDay, recurrenceSchedule === 'custom' ? recurrenceTime : transactionTime || '09:00', today());
+      if (!recurring) return setError(t('fieldRequired'));
+    } else if (initialTransaction?.recurring) {
+      recurring = { ...initialTransaction.recurring, enabled: false };
+    }
     setError('');
     setWorking(true);
     try {
@@ -781,6 +809,8 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
         accountId: selectedAccount.id, categoryId: selectedCategoryId,
         title,
         transactionDate, transactionTime, note: String(form.get('note') ?? '').trim(),
+        ...(recurring ? { recurring } : {}),
+        ...(initialTransaction?.recurrenceSourceId ? { recurrenceSourceId: initialTransaction.recurrenceSourceId, recurrenceMonth: initialTransaction.recurrenceMonth } : {}),
         ...(user && noteImagePath ? { noteImage: noteImagePath } : {})
       });
       formElement.reset();
@@ -818,6 +848,14 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
           {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} defaultCurrency={selectedAccount.currency} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
           </div>
           <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
+          {!isGeneratedOccurrence && <div className="field recurring-field">
+            <label className="recurring-toggle"><input type="checkbox" checked={monthlyAuto} onChange={(event) => setMonthlyAuto(event.target.checked)} /><span>{t('monthlyAutoAdd')}</span></label>
+            {monthlyAuto && <div className="recurring-options">
+              <label className="field"><span>{t('recurrenceTiming')}</span><select value={recurrenceSchedule} onChange={(event) => setRecurrenceSchedule(event.target.value)}><option value="month-start">{t('monthStart')}</option><option value="month-end">{t('monthEnd')}</option><option value="custom">{t('customTime')}</option></select></label>
+              {recurrenceSchedule === 'custom' && <div className="recurring-custom-fields"><label className="field"><span>{t('dayOfMonth')}</span><input type="number" min="1" max="31" value={recurrenceDay} onChange={(event) => setRecurrenceDay(event.target.value)} required /></label><label className="field"><span>{t('recurrenceTime')}</span><input type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} required /></label></div>}
+              <small>{t('monthlyAutoAddHint')}</small>
+            </div>}
+          </div>}
           <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>
           {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImage ? t('changeImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={chooseNoteImage} /></label>{noteImage && <div className="note-image-preview"><img src={noteImage} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImage('')}>{t('removeImage')}</button></div>}</div>}
           {error && <div className="inline-error">{error}</div>}
@@ -878,6 +916,7 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
               {item.transactionTime && <span className="transaction-time-tag">{formatTransactionTime(item.transactionTime, timeFormat, language)}</span>}
               {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
               <span className="transaction-tag">{transactionCategoryName(item) || '\u2014'}</span>
+              {(item.recurring?.enabled || item.recurrenceSourceId) && <span className="transaction-recurring-mark" title={t('monthlyAutoAdd')} aria-label={t('monthlyAutoAdd')}><span aria-hidden="true">{'\u21bb'}</span>{t('monthlyAutoAdd')}</span>}
             </div>
           </div>
           <div className="transaction-value-group"><strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>{reportCurrency && item.currency !== reportCurrency && (() => {

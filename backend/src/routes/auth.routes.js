@@ -22,6 +22,17 @@ const loginInput = z.object({
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   password: z.string().min(1).max(128)
 }).strict();
+const recurringInput = z.object({
+  enabled: z.boolean(),
+  schedule: z.enum(['month-start', 'month-end', 'custom']).optional(),
+  dayOfMonth: z.number().int().min(1).max(31).optional(),
+  time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+  nextRunDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+}).strict().superRefine((rule, context) => {
+  if (!rule.enabled) return;
+  if (!rule.schedule || !rule.time || !rule.nextRunDate) context.addIssue({ code: 'custom', message: 'Enabled recurring transactions require a schedule, time and next run date' });
+  if (rule.schedule === 'custom' && !rule.dayOfMonth) context.addIssue({ code: 'custom', path: ['dayOfMonth'], message: 'Custom recurrence requires a day of month' });
+});
 
 const workspaceInput = z.object({
   accounts: z.array(z.object({
@@ -39,7 +50,8 @@ const workspaceInput = z.object({
     categoryId: z.string().min(1).max(80), transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     transactionTime: z.string().regex(/^$|^(?:[01]\d|2[0-3]):[0-5]\d$/).optional().default(''),
     note: z.string().max(500).default(''), noteImage: transactionImagePath.optional().default(''),
-    accountId: z.string().min(1).max(80).nullable().optional()
+    accountId: z.string().min(1).max(80).nullable().optional(), recurring: recurringInput.optional(),
+    recurrenceSourceId: z.string().min(1).max(80).optional(), recurrenceMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional()
   }).strict()).max(10000),
   budgets: z.array(z.object({
     id: z.string().min(1).max(80), name: z.string().trim().max(60).optional().default(''),

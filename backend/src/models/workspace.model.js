@@ -16,6 +16,14 @@ const accountSchema = new mongoose.Schema({
   openingBalance: { type: String, required: true, match: /^\d{1,16}(?:\.\d{1,2})?$/ }
 }, { _id: false, strict: 'throw' });
 
+const recurringSchema = new mongoose.Schema({
+  enabled: { type: Boolean, required: true },
+  schedule: { type: String, enum: ['month-start', 'month-end', 'custom'] },
+  dayOfMonth: { type: Number, min: 1, max: 31 },
+  time: { type: String, match: /^(?:[01]\d|2[0-3]):[0-5]\d$/ },
+  nextRunDate: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ }
+}, { _id: false, strict: 'throw' });
+
 const transactionSchema = new mongoose.Schema({
   id: { type: String, required: true, maxlength: 80 },
   type: { type: String, enum: TRANSACTION_TYPES, required: true },
@@ -27,7 +35,10 @@ const transactionSchema = new mongoose.Schema({
   transactionTime: { type: String, default: '', match: /^$|^(?:[01]\d|2[0-3]):[0-5]\d$/ },
   note: { type: String, default: '', maxlength: 500 },
   noteImage: { type: String, default: '', maxlength: 180, match: /^$|^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i },
-  accountId: { type: String, default: null, maxlength: 80 }
+  accountId: { type: String, default: null, maxlength: 80 },
+  recurring: { type: recurringSchema, default: undefined },
+  recurrenceSourceId: { type: String, maxlength: 80 },
+  recurrenceMonth: { type: String, match: /^\d{4}-(0[1-9]|1[0-2])$/ }
 }, { _id: false, strict: 'throw' });
 
 const budgetSchema = new mongoose.Schema({
