@@ -118,7 +118,7 @@ export function App() {
   useEffect(() => localStorage.setItem('mini-finance.report-currency', reportCurrency), [reportCurrency]);
 
   useEffect(() => {
-    if (page !== 'activity') return undefined;
+    if (page !== 'activity' && page !== 'budgets') return undefined;
     let active = true;
     setFx((current) => ({ ...current, status: 'loading' }));
     fetchLatestFxRates()
@@ -250,8 +250,14 @@ export function App() {
         ...current,
         categories,
         budgets: current.budgets.some((item) => item.id === savedBudget.id)
-          ? current.budgets.map((item) => item.id === savedBudget.id || item.categoryId === linkedCategory.id ? { ...item, ...(item.categoryId === linkedCategory.id ? { name: budget.name } : {}), ...(item.id === savedBudget.id ? savedBudget : {}) } : item)
-          : [...current.budgets, savedBudget]
+          ? current.budgets.map((item) => {
+              const currentBudget = { ...item };
+              delete currentBudget.accountId;
+              return item.id === savedBudget.id || item.categoryId === linkedCategory.id
+                ? { ...currentBudget, ...(item.categoryId === linkedCategory.id ? { name: budget.name } : {}), ...(item.id === savedBudget.id ? savedBudget : {}) }
+                : currentBudget;
+            })
+          : [...current.budgets.filter((item) => item.categoryId !== linkedCategory.id).map(({ accountId, ...item }) => item), savedBudget]
       };
     });
     if (closeEditor) {
@@ -341,7 +347,7 @@ export function App() {
           ) : page === 'settings' ? (
             <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} />
           ) : page === 'budgets' ? (
-            <BudgetPage budgets={workspace.budgets} transactions={workspace.transactions} categories={workspace.categories} accounts={workspace.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
+            <BudgetPage budgets={workspace.budgets} transactions={workspace.transactions} categories={workspace.categories} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={workspace.transactions} categories={workspace.categories} accounts={workspace.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
           ) : (
@@ -374,7 +380,7 @@ export function App() {
           {rightEditor === 'account' ? (
             <AccountForm t={t} onCancel={() => setRightEditor(null)} onSubmit={addAccount} />
           ) : rightEditor === 'budget' ? (
-            <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} accounts={workspace.accounts} defaultAccountId={selectedAccountId} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} onCreateAccount={() => setRightEditor('account')} />
+            <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} defaultCurrency={workspace.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
             <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={workspace.accounts} categories={workspace.categories} budgets={workspace.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={() => setRightEditor('account')} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} />
           ) : (
@@ -451,22 +457,26 @@ function AccountForm({ t, onCancel, onSubmit }) {
 
 const budgetColors = ['#557b63', '#7893a4', '#b88762', '#8879a6', '#b77979', '#a39152'];
 
-function BudgetPage({ budgets, transactions, categories, accounts, month, locale, t, onAdd, onEdit }) {
+function BudgetPage({ budgets, transactions, categories, month, locale, t, fx, onAdd, onEdit }) {
   const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
-  const accountMap = new Map(accounts.map((account) => [account.id, account.name]));
   const visibleBudgets = budgets.filter((budget) => !budget.month || budget.month === month);
   const monthEnd = new Date(`${month}-01T12:00:00`);
   monthEnd.setMonth(monthEnd.getMonth() + 1, 0);
   const monthEndLabel = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(monthEnd);
 
   function spentFor(budget) {
-    return transactions.reduce((sum, transaction) => {
-      if (transaction.type !== 'expense' || !transaction.transactionDate.startsWith(month) || transaction.currency !== budget.currency || (budget.accountId && transaction.accountId !== budget.accountId)) return sum;
+    let total = 0n;
+    for (const transaction of transactions) {
+      if (transaction.type !== 'expense' || !transaction.transactionDate.startsWith(month)) continue;
       const matches = budget.categoryId
         ? transaction.categoryId === budget.categoryId
         : categoryMap.get(transaction.categoryId)?.trim().toLocaleLowerCase() === budget.name?.trim().toLocaleLowerCase();
-      return matches ? sum + (moneyToCents(transaction.amount) ?? 0n) : sum;
-    }, 0n);
+      if (!matches) continue;
+      const converted = convertCents(moneyToCents(transaction.amount) ?? 0n, transaction.currency, budget.currency, fx.rates);
+      if (converted === null) return null;
+      total += converted;
+    }
+    return total;
   }
 
   return (
@@ -477,9 +487,12 @@ function BudgetPage({ budgets, transactions, categories, accounts, month, locale
           <div><div className="eyebrow">{t('budgets')}</div><h2>{t('monthlyBudgets')}</h2></div>
           <div className="panel-actions"><span className="count-pill">{visibleBudgets.length} {t('budgetsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('addBudget')} title={t('addBudget')}>+</button></div>
         </div>
+        {visibleBudgets.length > 0 && fx.status === 'loading' && <p className="budget-rates-status">{t('ratesLoading')}</p>}
+        {visibleBudgets.length > 0 && fx.status === 'error' && <p className="budget-rates-status">{t('ratesUnavailable')}</p>}
+        {visibleBudgets.length > 0 && fx.stale && <p className="budget-rates-status">{t('ratesCached')} · {t('ratesThrough')} {fx.date}</p>}
         {visibleBudgets.length ? (
           <div className="budget-list">
-            {visibleBudgets.map((budget) => <BudgetCard key={budget.id} budget={budget} spent={spentFor(budget)} locale={locale} monthEndLabel={monthEndLabel} categoryMap={categoryMap} accountName={accountMap.get(budget.accountId)} t={t} onClick={() => onEdit(budget)} />)}
+            {visibleBudgets.map((budget) => <BudgetCard key={budget.id} budget={budget} spent={spentFor(budget)} locale={locale} monthEndLabel={monthEndLabel} categoryMap={categoryMap} t={t} onClick={() => onEdit(budget)} />)}
           </div>
         ) : (
           <div className="empty-state budget-empty"><span className="empty-icon">＋</span><p>{t('noBudgets')}</p><button className="primary-button" onClick={onAdd}>{t('addBudget')}</button></div>
@@ -489,42 +502,40 @@ function BudgetPage({ budgets, transactions, categories, accounts, month, locale
   );
 }
 
-function BudgetCard({ budget, spent, locale, monthEndLabel, categoryMap, accountName, t, onClick }) {
+function BudgetCard({ budget, spent, locale, monthEndLabel, categoryMap, t, onClick }) {
   const limit = moneyToCents(budget.amount) ?? 0n;
-  const remaining = limit - spent;
-  const progress = limit > 0n ? Math.min(100, Number((spent * 10000n) / limit) / 100) : 0;
+  const remaining = spent === null ? null : limit - spent;
+  const progress = spent !== null && limit > 0n ? Math.min(100, Number((spent * 10000n) / limit) / 100) : 0;
   const name = budget.name || categoryMap.get(budget.categoryId) || t('budgets');
   return (
     <button className="budget-card" style={{ '--budget-accent': budget.color || budgetColors[0] }} onClick={onClick}>
       <span className="budget-card-heading"><strong>{name}</strong><span className="budget-currency">{budget.currency}</span></span>
       <span className="budget-amounts">
-        <span><small>{t('remainingBudget')}</small><strong>{formatCents(remaining, locale, budget.currency)}</strong></span>
+        <span><small>{t('remainingBudget')}</small><strong>{remaining === null ? '—' : formatCents(remaining, locale, budget.currency)}</strong></span>
         <span><small>{t('totalBudget')}</small><strong>{formatCents(limit, locale, budget.currency)}</strong></span>
       </span>
-      <span className="budget-progress" role="progressbar" aria-label={`${name} ${t('budgetProgress')}`} aria-valuenow={Math.round(progress)} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${progress}%` }} /></span>
-      <span className="budget-card-footer"><span>{accountName || t('allAccounts')}</span><span>{t('spentBudget')}: {formatCents(spent, locale, budget.currency)}</span><span>{t('monthEnds')} {monthEndLabel}</span></span>
+      <span className={`budget-progress ${spent === null ? 'unavailable' : ''}`} role="progressbar" aria-label={`${name} ${t('budgetProgress')}`} aria-valuenow={Math.round(progress)} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${progress}%` }} /></span>
+      <span className="budget-card-footer"><span>{t('spentBudget')}: {spent === null ? '—' : formatCents(spent, locale, budget.currency)}</span><span>{t('monthEnds')} {monthEndLabel}</span></span>
     </button>
   );
 }
 
-function BudgetForm({ initialBudget, categories, budgets, accounts, defaultAccountId, t, onCancel, onSubmit, onDelete, onCreateAccount, embedded = false }) {
+function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD', t, onCancel, onSubmit, onDelete, embedded = false }) {
   const [name, setName] = useState(initialBudget?.name ?? '');
   const [amount, setAmount] = useState(initialBudget?.amount ?? '100.00');
-  const [accountId, setAccountId] = useState(initialBudget?.accountId || defaultAccountId || accounts[0]?.id || '');
+  const [currency, setCurrency] = useState(initialBudget?.currency || defaultCurrency);
   const [color, setColor] = useState(initialBudget?.color || budgetColors[0]);
   const [error, setError] = useState('');
   const editing = Boolean(initialBudget);
-  const selectedAccount = accounts.find((account) => account.id === accountId);
 
   function submit(event) {
     event?.preventDefault();
     const cleanName = name.trim();
     const cents = moneyToCents(amount.trim());
     if (!cleanName || cleanName.length > 60 || cents === null || cents <= 0n) return setError(t('fieldRequired'));
-    if (!selectedAccount) return setError(t('chooseAccountFirst'));
     const existingCategory = categories.find((category) => category.type === 'expense' && category.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase());
     const categoryId = initialBudget?.categoryId || existingCategory?.id || crypto.randomUUID();
-    const duplicate = budgets.some((budget) => budget.id !== initialBudget?.id && budget.accountId === accountId && (budget.categoryId === categoryId || budget.name?.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase()));
+    const duplicate = budgets.some((budget) => budget.id !== initialBudget?.id && (budget.categoryId === categoryId || budget.name?.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase()));
     if (duplicate) return setError(t('budgetAlreadyExists'));
     setError('');
     onSubmit({
@@ -532,16 +543,15 @@ function BudgetForm({ initialBudget, categories, budgets, accounts, defaultAccou
       name: cleanName,
       categoryId,
       amount: centsToAmount(cents),
-      currency: selectedAccount.currency,
-      accountId,
+      currency,
       color
     });
   }
 
   const fields = <>
     <label className="field"><span>{t('budgetName')}</span><input name="budgetName" type="text" maxLength="60" value={name} onChange={(event) => setName(event.target.value)} autoFocus={!embedded} required /></label>
-    <div className="field"><span>{t('linkedAccount')}</span>{accounts.length ? <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select> : <><p className="budget-no-account">{t('chooseAccountFirst')}</p><button className="secondary-button" type="button" onClick={onCreateAccount}>{t('createFirstAccount')}</button></>}</div>
-    <label className="field"><span>{t('monthlyAvailable')}</span><div className="budget-amount-input"><input name="budgetAmount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /><span>{selectedAccount?.currency || '—'}</span></div></label>
+    <label className="field"><span>{t('defaultCurrency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+    <label className="field"><span>{t('monthlyAvailable')}</span><div className="budget-amount-input"><input name="budgetAmount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /><span>{currency}</span></div></label>
     <div className="field"><span>{t('budgetCardColor')}</span><div className="budget-color-picker" role="group" aria-label={t('budgetCardColor')}>
       {budgetColors.map((value) => <button key={value} type="button" className={`budget-color-swatch ${color === value ? 'selected' : ''}`} style={{ '--swatch-color': value }} onClick={() => setColor(value)} aria-label={value} aria-pressed={color === value} />)}
     </div></div>
@@ -551,7 +561,7 @@ function BudgetForm({ initialBudget, categories, budgets, accounts, defaultAccou
   if (embedded) return <div className="inline-budget-editor" onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
     <div className="inline-budget-heading"><strong>{t('addBudget')}</strong><button type="button" className="text-button" onClick={onCancel}>{t('cancel')}</button></div>
     {fields}
-    <button className="primary-button" type="button" onClick={() => submit()} disabled={!accounts.length}>{t('saveBudget')}</button>
+    <button className="primary-button" type="button" onClick={() => submit()}>{t('saveBudget')}</button>
   </div>;
 
   return <section className="panel side-editor budget-editor">
@@ -559,7 +569,7 @@ function BudgetForm({ initialBudget, categories, budgets, accounts, defaultAccou
     <p className="editor-copy">{t('budgetEditorHint')}</p>
     <form onSubmit={submit}>
       {fields}
-      <div className="transaction-form-actions"><button className="primary-button" type="submit" disabled={!accounts.length}>{t('saveBudget')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteBudget'))) onDelete(initialBudget.id); }}>{t('deleteBudget')}</button>}</div>
+      <div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveBudget')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteBudget'))) onDelete(initialBudget.id); }}>{t('deleteBudget')}</button>}</div>
       <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
     </form>
   </section>;
@@ -735,7 +745,7 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
             <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>
           </div>
-          {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} accounts={accounts} defaultAccountId={account.id} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
+          {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} defaultCurrency={account.currency} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
           </div>
           <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
           <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>

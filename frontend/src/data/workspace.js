@@ -72,7 +72,10 @@ export function loadAnonymousWorkspace() {
 }
 
 export function saveAnonymousWorkspace(workspace) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    ...workspace,
+    budgets: (workspace.budgets ?? []).map((budget) => Object.fromEntries(Object.entries(budget).filter(([key]) => key !== 'accountId')))
+  }));
 }
 
 export function clearAnonymousWorkspace() {
@@ -110,7 +113,7 @@ export async function saveServerWorkspace(workspace) {
       accounts: workspace.accounts ?? [],
       categories: workspace.categories,
       transactions: workspace.transactions,
-      budgets: workspace.budgets
+      budgets: (workspace.budgets ?? []).map((budget) => Object.fromEntries(Object.entries(budget).filter(([key]) => key !== 'accountId')))
     })
   });
   return response.data;
