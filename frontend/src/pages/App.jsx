@@ -349,7 +349,7 @@ export function App() {
           ) : page === 'budgets' ? (
             <BudgetPage budgets={workspace.budgets} transactions={workspace.transactions} categories={workspace.categories} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
           ) : page === 'activity' ? (
-            <ActivityPage items={activityTransactions} allTransactions={workspace.transactions} categories={workspace.categories} accounts={workspace.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
+            <ActivityPage items={activityTransactions} allTransactions={workspace.transactions} categories={workspace.categories} budgets={workspace.budgets} accounts={workspace.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
           ) : (
             <>
               <section className="page-heading">
@@ -575,7 +575,9 @@ function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD
   </section>;
 }
 
-function ActivityPage({ items, allTransactions, categories, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
+function ActivityPage({ items, allTransactions, categories, budgets, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
+  const [filters, setFilters] = useState({ startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '' });
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const monthDate = new Date(`${month}-01T12:00:00`);
   const monthOptions = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(monthDate);
@@ -605,6 +607,29 @@ function ActivityPage({ items, allTransactions, categories, accounts, month, onM
     : (!totalsAvailable || fx.status === 'error') ? t('ratesUnavailable')
       : fx.stale ? t('ratesCached')
         : fx.date ? `${t('ratesThrough')} ${fx.date}` : '';
+  const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
+  const minimum = filters.minimum ? moneyToCents(filters.minimum) : null;
+  const maximum = filters.maximum ? moneyToCents(filters.maximum) : null;
+  const filteredItems = items.filter((item) => {
+    if (filters.startDate && item.transactionDate < filters.startDate) return false;
+    if (filters.endDate && item.transactionDate > filters.endDate) return false;
+    if (filters.accountId && item.accountId !== filters.accountId) return false;
+    if (filters.budgetId) {
+      const budget = budgets.find((entry) => entry.id === filters.budgetId);
+      const categoryMatches = budget?.categoryId
+        ? item.categoryId === budget.categoryId
+        : categoryMap.get(item.categoryId)?.trim().toLocaleLowerCase() === budget?.name?.trim().toLocaleLowerCase();
+      if (!categoryMatches) return false;
+    }
+    if (filters.minimum || filters.maximum) {
+      const value = convertCents(moneyToCents(item.amount) ?? 0n, item.currency, reportCurrency, fx.rates);
+      if (value === null) return false;
+      if (minimum !== null && value < minimum) return false;
+      if (maximum !== null && value > maximum) return false;
+    }
+    return true;
+  });
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   return (
     <section className="page-section activity-page">
@@ -628,7 +653,17 @@ function ActivityPage({ items, allTransactions, categories, accounts, month, onM
           <span className={`activity-stat net ${net < 0n ? 'negative' : 'positive'}`}><small>{t('balance')}</small><strong>{totalsAvailable ? formatCents(net, locale, reportCurrency) : '—'}</strong></span>
         </div>
       </section>
-      <TransactionPanel items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={t('empty')} />
+      <details className="activity-filters" open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)}>
+        <summary>{t('filterTransactions')}{activeFilterCount > 0 && <span className="activity-filter-count">{activeFilterCount}</span>}</summary>
+        <div className="activity-filter-grid">
+          <div className="activity-filter-field"><span>{t('dateRange')}</span><div className="activity-filter-range"><input aria-label={t('startDate')} type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} /><input aria-label={t('endDate')} type="date" value={filters.endDate} onChange={(event) => setFilters((current) => ({ ...current, endDate: event.target.value }))} /></div></div>
+          <div className="activity-filter-field"><span>{t('amountRange')} · {reportCurrency}</span><div className="activity-filter-range"><input aria-label={t('minimumAmount')} type="number" min="0" step="0.01" placeholder={t('minimumAmount')} value={filters.minimum} onChange={(event) => setFilters((current) => ({ ...current, minimum: event.target.value }))} /><input aria-label={t('maximumAmount')} type="number" min="0" step="0.01" placeholder={t('maximumAmount')} value={filters.maximum} onChange={(event) => setFilters((current) => ({ ...current, maximum: event.target.value }))} /></div></div>
+          <label className="activity-filter-field"><span>{t('filterBudget')}</span><select value={filters.budgetId} onChange={(event) => setFilters((current) => ({ ...current, budgetId: event.target.value }))}><option value="">{t('allBudgets')}</option>{budgets.map((budget) => <option key={budget.id} value={budget.id}>{budget.name || categoryMap.get(budget.categoryId) || t('budgets')}</option>)}</select></label>
+          <label className="activity-filter-field"><span>{t('filterAccount')}</span><select value={filters.accountId} onChange={(event) => setFilters((current) => ({ ...current, accountId: event.target.value }))}><option value="">{t('allAccounts')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label>
+        </div>
+        {activeFilterCount > 0 && <button type="button" className="activity-filter-clear" onClick={() => setFilters({ startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '' })}>{t('clearFilters')}</button>}
+      </details>
+      <TransactionPanel items={filteredItems} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={activeFilterCount ? t('noMatchingTransactions') : t('empty')} />
     </section>
   );
 }
@@ -810,7 +845,7 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
             const converted = convertCents(moneyToCents(item.amount) ?? 0n, item.currency, reportCurrency, fxRates);
             return converted === null ? null : <small className="transaction-converted">≈ {item.type === 'income' ? '+' : '\u2212'}{formatCents(converted, locale, reportCurrency)}</small>;
           })()}</div>
-          <button className="icon-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}>x</button>
+          <button className="transaction-delete-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg></button>
           {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong><b className={item.type}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {categoryMap.get(item.categoryId) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
         </article>)}
       </section>)}
