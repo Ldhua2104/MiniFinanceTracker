@@ -36,7 +36,10 @@ export function makeStarterWorkspace() {
     accounts: [],
     categories: [
       { id: id(), name: 'None', type: 'expense', archived: false },
-      { id: id(), name: 'Other', type: 'expense', archived: false }
+      { id: id(), name: 'Other', type: 'expense', archived: false },
+      { id: id(), name: 'Other', type: 'income', archived: false },
+      { id: id(), name: 'Salary', type: 'income', archived: false },
+      { id: id(), name: 'Bonus', type: 'income', archived: false }
     ],
     transactions: [],
     budgets: [],
@@ -45,24 +48,30 @@ export function makeStarterWorkspace() {
 }
 
 export function ensureStarterCategories(workspace) {
+  const categories = [...(workspace.categories ?? [])];
+  const defaults = [
+    { name: 'None', type: 'expense' },
+    { name: 'Other', type: 'expense' },
+    { name: 'Other', type: 'income' },
+    { name: 'Salary', type: 'income' },
+    { name: 'Bonus', type: 'income' }
+  ];
+  for (const category of defaults) {
+    const exists = categories.some((item) => item.type === category.type && item.name.trim().toLocaleLowerCase() === category.name.toLocaleLowerCase());
+    if (!exists) categories.push({ id: crypto.randomUUID(), ...category, archived: false });
+  }
   return {
     ...emptyWorkspace(),
     ...workspace,
     accounts: workspace.accounts ?? [],
-    categories: workspace.categories?.length
-      ? [
-          ...workspace.categories,
-          ...(workspace.categories.some((item) => item.name.toLowerCase() === 'none') ? [] : [{ id: crypto.randomUUID(), name: 'None', type: 'expense', archived: false }]),
-          ...(workspace.categories.some((item) => item.name.toLowerCase() === 'other') ? [] : [{ id: crypto.randomUUID(), name: 'Other', type: 'expense', archived: false }])
-        ]
-      : makeStarterWorkspace().categories
+    categories
   };
 }
 
 export function loadAnonymousWorkspace() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return { ...emptyWorkspace(), ...JSON.parse(stored) };
+    if (stored) return ensureStarterCategories({ ...emptyWorkspace(), ...JSON.parse(stored) });
   } catch {
     localStorage.removeItem(STORAGE_KEY);
   }

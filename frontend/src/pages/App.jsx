@@ -692,6 +692,11 @@ function TransactionPanel({ items, categories, accounts, t, language, timeFormat
   );
 }
 
+function incomeSourceLabel(name, t) {
+  const key = { other: 'otherSource', salary: 'salarySource', bonus: 'bonusSource' }[name.trim().toLocaleLowerCase()];
+  return key ? t(key) : name;
+}
+
 function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget }) {
   const [accountId, setAccountId] = useState(initialTransaction?.accountId ?? account?.id ?? accounts[0]?.id ?? '');
   const [accountPickerOpen, setAccountPickerOpen] = useState(false);
@@ -709,15 +714,22 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
   const selectedAccount = accounts.find((item) => item.id === accountId) ?? account ?? accounts[0] ?? null;
   const categoryMap = new Map(categories.map((item) => [item.id, item]));
   const choiceMap = new Map();
-  ['none', 'other'].forEach((name) => {
-    const item = categories.find((category) => category.name.trim().toLocaleLowerCase() === name);
-    if (item) choiceMap.set(item.id, item);
-  });
-  budgets.forEach((budget) => {
-    const id = budget.categoryId || budget.id;
-    const source = categoryMap.get(id);
-    if (id && !choiceMap.has(id)) choiceMap.set(id, { id, name: budget.name || source?.name || t('budgets'), type: 'expense', archived: false });
-  });
+  if (type === 'income') {
+    ['other', 'salary', 'bonus'].forEach((name) => {
+      const item = categories.find((category) => category.type === 'income' && category.name.trim().toLocaleLowerCase() === name);
+      if (item) choiceMap.set(item.id, item);
+    });
+  } else {
+    ['none', 'other'].forEach((name) => {
+      const item = categories.find((category) => category.type === 'expense' && category.name.trim().toLocaleLowerCase() === name);
+      if (item) choiceMap.set(item.id, item);
+    });
+    budgets.forEach((budget) => {
+      const id = budget.categoryId || budget.id;
+      const source = categoryMap.get(id);
+      if (id && !choiceMap.has(id)) choiceMap.set(id, { id, name: budget.name || source?.name || t('budgets'), type: 'expense', archived: false });
+    });
+  }
   const choices = [...choiceMap.values()];
   const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
   const weekday = transactionDate ? new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long' }).format(new Date(`${transactionDate}T12:00:00`)) : '';
@@ -796,12 +808,12 @@ function TransactionForm({ account, accounts, categories, budgets, user, t, lang
           {addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); setAccountPickerOpen(false); }} />}
         </div>
         <form onSubmit={submit}>
-          <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); }}>{t('incomeType')}</button></div></label>
+          <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); setAddingBudget(false); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); setAddingBudget(false); }}>{t('incomeType')}</button></div></label>
           <label className="field"><span>{t('titleLabel')}</span><input name="title" type="text" maxLength="100" defaultValue={initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || ''} required autoFocus /></label>
           <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /><span>{selectedAccount.currency}</span></div></label>
-          <div className="field"><span>{t('budgets')}</span><div className="category-chip-list" role="group" aria-label={t('budgets')}>
-            {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
-            <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>
+          <div className="field"><span>{type === 'expense' ? t('budgets') : t('source')}</span><div className="category-chip-list" role="group" aria-label={type === 'expense' ? t('budgets') : t('source')}>
+            {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{type === 'income' ? incomeSourceLabel(item.name, t) : item.name}</button>)}
+            {type === 'expense' && <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>}
           </div>
           {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} defaultCurrency={selectedAccount.currency} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
           </div>
@@ -827,8 +839,12 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
   const [tooltipId, setTooltipId] = useState(null);
   const hoverTimer = useRef(null);
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
-  const categoryMap = new Map(categories.map((item) => [item.id, item.name]));
+  const categoryMap = new Map(categories.map((item) => [item.id, item]));
   const accountMap = new Map(accounts.map((item) => [item.id, item.name]));
+  const transactionCategoryName = (item) => {
+    const category = categoryMap.get(item.categoryId);
+    return category ? (item.type === 'income' ? incomeSourceLabel(category.name, t) : category.name) : undefined;
+  };
   const groups = items.reduce((result, item) => {
     const last = result[result.length - 1];
     if (last?.date === item.transactionDate) last.items.push(item);
@@ -856,12 +872,12 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
         {group.items.map((item) => <article className={`transaction-row ${tooltipId === item.id ? 'tooltip-visible' : ''}`} key={item.id} role="button" tabIndex={0} onMouseEnter={() => startTooltip(item.id)} onMouseLeave={stopTooltip} onClick={() => onEdit(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item); } }}>
           <span className={`transaction-symbol ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}</span>
           <div className="transaction-info">
-            <strong>{item.title || item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong>
+            <strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong>
             {item.noteImage && <img className="transaction-note-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
             <div className="transaction-meta-tags">
               {item.transactionTime && <span className="transaction-time-tag">{formatTransactionTime(item.transactionTime, timeFormat, language)}</span>}
               {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
-              <span className="transaction-tag">{categoryMap.get(item.categoryId) || '\u2014'}</span>
+              <span className="transaction-tag">{transactionCategoryName(item) || '\u2014'}</span>
             </div>
           </div>
           <div className="transaction-value-group"><strong className={`transaction-value ${item.type}`}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</strong>{reportCurrency && item.currency !== reportCurrency && (() => {
@@ -869,7 +885,7 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
             return converted === null ? null : <small className="transaction-converted">≈ {item.type === 'income' ? '+' : '\u2212'}{formatCents(converted, locale, reportCurrency)}</small>;
           })()}</div>
           <button className="transaction-delete-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg></button>
-          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || categoryMap.get(item.categoryId) || '\u2014'}</strong><b className={item.type}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {categoryMap.get(item.categoryId) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
+          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong><b className={item.type}>{item.type === 'income' ? '+' : '\u2212'}{formatCents(moneyToCents(item.amount) ?? 0n, locale, item.currency)}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
         </article>)}
       </section>)}
     </div>
