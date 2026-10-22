@@ -350,6 +350,7 @@ export function App() {
             <button className={page === 'overview' ? 'selected' : ''} onClick={() => setPage('overview')}><span>⌂</span>{t('home')}</button>
             <button className={page === 'activity' ? 'selected' : ''} onClick={() => setPage('activity')}><span>↗</span>{t('activity')}</button>
             <button className={page === 'budgets' ? 'selected' : ''} onClick={() => setPage('budgets')}><span>◷</span>{t('budgets')}</button>
+            <button className={page === 'income' ? 'selected' : ''} onClick={() => setPage('income')}><span>↑</span>{t('income')}</button>
             <button className={page === 'profile' ? 'selected' : ''} onClick={() => setPage('profile')}><span>○</span>{t('profile')}</button>
             <button className={page === 'settings' ? 'selected' : ''} onClick={() => setPage('settings')}><span>⚙</span>{t('settings')}</button>
           </nav>
@@ -367,6 +368,8 @@ export function App() {
             <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} />
           ) : page === 'budgets' ? (
             <BudgetPage budgets={workspace.budgets} transactions={workspace.transactions} categories={workspace.categories} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
+          ) : page === 'income' ? (
+            <section className="page-section"><PageTitle title={t('income')} detail="" /></section>
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={workspace.transactions} categories={workspace.categories} budgets={workspace.budgets} accounts={workspace.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
           ) : (
