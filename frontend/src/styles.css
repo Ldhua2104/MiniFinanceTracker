@@ -1354,6 +1354,8 @@ h2 {
 .close-editor {
     flex: 0 0 25px;
 }
+.budget-editor .close-editor { color: #bf5148; }
+.budget-editor .close-editor:hover { background: #fde9e6; color: #a53e37; }
 
 .editor-copy {
     margin: 0 0 20px;

@@ -570,7 +570,6 @@ function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD
     <form onSubmit={submit}>
       {fields}
       <div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveBudget')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteBudget'))) onDelete(initialBudget.id); }}>{t('deleteBudget')}</button>}</div>
-      <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
     </form>
   </section>;
 }
