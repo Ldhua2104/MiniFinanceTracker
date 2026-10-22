@@ -330,7 +330,7 @@ export function App() {
           <label className="language-picker">
             <span className="sr-only">{t('language')}</span>
             <select value={language} onChange={(event) => setLanguage(event.target.value)} aria-label={t('language')}>
-              <option value="zh">中文</option><option value="en">English</option>
+              <option value="zh">&#x7B80;&#x4F53;&#x4E2D;&#x6587;</option><option value="en">English</option>
             </select>
           </label>
           <button className="theme-switch" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={t('theme')} title={t('theme')}>
@@ -1039,7 +1039,7 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
   const [migrationNotice, setMigrationNotice] = useState(false);
   return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
     <div className="panel settings-panel">
-      <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh">??</option><option value="en">English</option></select></label>
+      <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh">&#x7B80;&#x4F53;&#x4E2D;&#x6587;</option><option value="en">English</option></select></label>
       <label className="settings-row"><span><strong>{t('theme')}</strong><small>{t('themeHint')}</small></span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></select></label>
       <label className="settings-row"><span><strong>{t('timeFormat')}</strong><small>{t('timeFormatHint')}</small></span><select value={timeFormat} onChange={(event) => setTimeFormat(event.target.value)}><option value="12">{t('hourFormat12')}</option><option value="24">{t('hourFormat24')}</option></select></label>
     </div>
