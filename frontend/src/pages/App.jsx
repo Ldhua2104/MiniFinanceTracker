@@ -943,7 +943,15 @@ function TransactionList({ items, categories, accounts = [], t, language, timeFo
             return converted === null ? null : <small className="transaction-converted">{formatSignedCents(converted, locale, reportCurrency, item.type === 'income' ? '+' : '-')}</small>;
           })()}</div>
           <button className="transaction-delete-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg></button>
-          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip"><div className="transaction-tooltip-heading"><strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong><b className={item.type}>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, item.type === 'income' ? '+' : '-')}</b></div><div className="transaction-tooltip-meta"><span>{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}</span><span>{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span></div>{item.note && <p>{item.note}</p>}{item.noteImage && <img src={item.noteImage} alt="" loading="lazy" />}</div>}
+          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip">
+            <div className="transaction-tooltip-heading"><strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong><b className={item.type}>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, item.type === 'income' ? '+' : '-')}</b></div>
+            <div className="transaction-tooltip-meta">
+              <span className="transaction-tooltip-meta-left">{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}{(item.recurring?.enabled || item.recurrenceSourceId) && <span className="transaction-tooltip-recurring">↻ {t('monthlyAutoAdd')}</span>}</span>
+              <span className="transaction-tooltip-meta-right">{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span>
+            </div>
+            {item.note && <p>{item.note}</p>}
+            {item.noteImage && <img className="transaction-tooltip-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
+          </div>}
         </article>)}
       </section>)}
     </div>
