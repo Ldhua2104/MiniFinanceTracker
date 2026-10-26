@@ -293,7 +293,7 @@ export function App() {
 
   function saveIncomeSource(source, { closeEditor = true } = {}) {
     setWorkspace((current) => {
-      const saved = { ...source, type: 'income', archived: false };
+      const saved = { ...source, color: source.color || budgetColors[0], type: 'income', archived: false };
       const exists = current.categories.some((item) => item.id === saved.id);
       return { ...current, categories: exists
         ? current.categories.map((item) => item.id === saved.id ? saved : item)
@@ -303,6 +303,25 @@ export function App() {
       setEditingIncomeSource(null);
       setRightEditor(null);
     }
+  }
+
+  function deleteIncomeSource(id) {
+    const source = workspace.categories.find((item) => item.id === id && item.type === 'income');
+    if (!source) return false;
+    const hasTransactions = workspace.transactions.some((item) => item.type === 'income' && item.categoryId === id);
+    const fallback = workspace.categories.find((item) => item.type === 'income' && item.id !== id && item.name.trim().toLocaleLowerCase() === 'other')
+      ?? workspace.categories.find((item) => item.type === 'income' && item.id !== id);
+    if (hasTransactions && !fallback) return false;
+    setWorkspace((current) => ({
+      ...current,
+      categories: current.categories.filter((item) => item.id !== id),
+      transactions: fallback
+        ? current.transactions.map((item) => item.type === 'income' && item.categoryId === id ? { ...item, categoryId: fallback.id } : item)
+        : current.transactions
+    }));
+    setEditingIncomeSource(null);
+    setRightEditor(null);
+    return true;
   }
 
   function deleteBudget(id) {
@@ -424,7 +443,7 @@ export function App() {
           ) : rightEditor === 'budget' ? (
             <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} defaultCurrency={workspace.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
           ) : rightEditor === 'income-source' ? (
-            <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={workspace.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} />
+            <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={workspace.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
             <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={workspace.accounts} categories={workspace.categories} budgets={workspace.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
           ) : (
@@ -738,8 +757,9 @@ function IncomePage({ categories, transactions, accounts, month, locale, t, fx, 
   </section>;
 }
 
-function IncomeSourceForm({ initialSource, categories, t, onCancel, onSubmit, embedded = false }) {
+function IncomeSourceForm({ initialSource, categories, t, onCancel, onSubmit, onDelete, embedded = false }) {
   const [title, setTitle] = useState(initialSource?.name ?? '');
+  const [color, setColor] = useState(initialSource?.color || budgetColors[0]);
   const [error, setError] = useState('');
   const editing = Boolean(initialSource);
 
@@ -752,11 +772,21 @@ function IncomeSourceForm({ initialSource, categories, t, onCancel, onSubmit, em
       && category.name.trim().toLocaleLowerCase() === cleanTitle.toLocaleLowerCase());
     if (duplicate) return setError(t('incomeSourceExists'));
     setError('');
-    onSubmit({ id: initialSource?.id ?? crypto.randomUUID(), name: cleanTitle, type: 'income', archived: false });
+    onSubmit({ id: initialSource?.id ?? crypto.randomUUID(), name: cleanTitle, color, type: 'income', archived: false });
     if (embedded) setTitle('');
   }
 
-  const fields = <label className="field"><span>{t('sourceTitle')}</span><input type="text" maxLength="50" value={title} onChange={(event) => setTitle(event.target.value)} required autoFocus={!embedded} /></label>;
+  function deleteSource() {
+    if (!initialSource || !window.confirm(t('confirmDeleteIncomeSource'))) return;
+    if (onDelete(initialSource.id) === false) setError(t('incomeSourceDeleteRequiresReplacement'));
+  }
+
+  const fields = <>
+    <label className="field"><span>{t('sourceTitle')}</span><input type="text" maxLength="50" value={title} onChange={(event) => setTitle(event.target.value)} required autoFocus={!embedded} /></label>
+    <div className="field"><span>{t('budgetCardColor')}</span><div className="budget-color-picker" role="group" aria-label={t('budgetCardColor')}>
+      {budgetColors.map((value) => <button key={value} type="button" className={`budget-color-swatch ${color === value ? 'selected' : ''}`} style={{ '--swatch-color': value }} onClick={() => setColor(value)} aria-label={value} aria-pressed={color === value} />)}
+    </div></div>
+  </>;
   if (embedded) return <div className="inline-budget-editor inline-income-source-editor" onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
     <div className="inline-budget-heading"><strong>{t('addIncomeSource')}</strong><button type="button" className="text-button" onClick={onCancel}>{t('cancel')}</button></div>
     {fields}{error && <div className="inline-error">{error}</div>}
@@ -766,7 +796,7 @@ function IncomeSourceForm({ initialSource, categories, t, onCancel, onSubmit, em
   return <section className="panel side-editor income-source-editor">
     <div className="editor-heading"><div><div className="eyebrow">{t('incomeSources')}</div><h2>{editing ? t('editIncomeSource') : t('addIncomeSource')}</h2></div><button className="icon-button close-editor" type="button" onClick={onCancel} aria-label={t('close')}>×</button></div>
     <p className="editor-copy">{t('incomeSourceHint')}</p>
-    <form onSubmit={submit}>{fields}{error && <div className="inline-error">{error}</div>}<button className="primary-button" type="submit">{t('saveIncomeSource')}</button></form>
+    <form onSubmit={submit}>{fields}{error && <div className="inline-error">{error}</div>}<div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveIncomeSource')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={deleteSource}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l-1-13M10 11v5m4-5v5" /></svg><span>{t('delete')}</span></button>}</div></form>
   </section>;
 }
 
@@ -776,7 +806,7 @@ function IncomeSourceCard({ data, accounts, reportCurrency, locale, t, onEdit })
   const total = data.total;
   const accountTotal = data.accountBreakdown?.reduce((sum, item) => sum + item.amount, 0n) ?? 0n;
   const accountNames = new Map(accounts.map((account) => [account.id, account.name]));
-  return <article className={`income-source-card ${expanded ? 'expanded' : ''}`}>
+  return <article className={`income-source-card ${expanded ? 'expanded' : ''}`} style={{ '--income-source-accent': data.source.color || '#719a78' }}>
     <button type="button" className="income-source-edit" onClick={onEdit} aria-label={`${t('editIncomeSource')}: ${name}`} title={t('editIncomeSource')}>✎</button>
     <button type="button" className="income-source-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
       <span className="income-source-heading"><strong>{name}</strong><span className="budget-currency">{reportCurrency}</span><svg className="budget-expand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span>

@@ -2224,9 +2224,9 @@ h2 {
     position: relative;
     overflow: hidden;
     border: 1px solid var(--line);
-    border-left: 4px solid var(--positive, #719a78);
+    border-left: 4px solid var(--income-source-accent, #719a78);
     border-radius: 13px;
-    background: color-mix(in srgb, var(--positive, #719a78) 4%, var(--surface));
+    background: color-mix(in srgb, var(--income-source-accent, #719a78) 5%, var(--surface));
 }
 
 .income-source-summary {
@@ -2308,14 +2308,14 @@ h2 {
 }
 
 .income-source-totals strong {
-    color: var(--positive, #557b63);
+    color: var(--income-source-accent, #557b63);
     font-size: 18px;
     font-variant-numeric: tabular-nums;
 }
 
 .income-source-count { display: grid; flex: 0 0 auto; align-self: end; justify-items: end; gap: 2px; text-align: right; }
 .income-source-count small { color: var(--muted); font-size: 10px; }
-.income-source-count strong { color: var(--positive, #557b63); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.income-source-count strong { color: var(--income-source-accent, #557b63); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
 
 .income-source-detail {
     display: grid;

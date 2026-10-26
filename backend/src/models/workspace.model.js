@@ -6,7 +6,8 @@ const categorySchema = new mongoose.Schema({
   id: { type: String, required: true, maxlength: 80 },
   name: { type: String, required: true, trim: true, maxlength: 50 },
   type: { type: String, enum: TRANSACTION_TYPES, required: true },
-  archived: { type: Boolean, default: false }
+  archived: { type: Boolean, default: false },
+  color: { type: String, match: /^#[\da-fA-F]{6}$/ }
 }, { _id: false, strict: 'throw' });
 
 const accountSchema = new mongoose.Schema({

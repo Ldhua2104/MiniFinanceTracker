@@ -41,7 +41,7 @@ const workspaceInput = z.object({
   }).strict()).max(100),
   categories: z.array(z.object({
     id: z.string().min(1).max(80), name: z.string().trim().min(1).max(50),
-    type: z.enum(['income', 'expense']), archived: z.boolean().default(false)
+    type: z.enum(['income', 'expense']), archived: z.boolean().default(false), color: z.string().regex(/^#[\da-fA-F]{6}$/).optional()
   }).strict()).max(500),
   transactions: z.array(z.object({
     id: z.string().min(1).max(80), type: z.enum(['income', 'expense']),
