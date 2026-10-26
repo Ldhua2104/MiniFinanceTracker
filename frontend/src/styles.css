@@ -1497,7 +1497,7 @@ h2 {
 .budget-card {
     display: grid;
     width: 100%;
-    gap: 15px;
+    gap: 0;
     padding: 18px 19px;
     border: 1px solid var(--line);
     border-left: 4px solid var(--budget-accent);
@@ -1505,22 +1505,46 @@ h2 {
     background: color-mix(in srgb, var(--budget-accent) 5%, var(--surface));
     color: var(--text);
     text-align: left;
-    cursor: pointer;
     transition: border-color .16s ease, background .16s ease, transform .16s ease;
 }
 .budget-card:hover { border-color: color-mix(in srgb, var(--budget-accent) 45%, var(--line)); transform: translateY(-1px); }
-.budget-card-heading, .budget-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.budget-card-topline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.budget-card-heading { display: flex; flex: 1; align-items: center; min-width: 0; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .budget-card-heading strong { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .budget-currency { padding: 5px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 9px; }
+.budget-expand-mark { margin-left: auto; color: var(--muted); font-size: 16px; }
+.budget-card-edit { flex: 0 0 auto; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); font: inherit; cursor: pointer; }
+.budget-card-edit:hover { color: var(--accent-dark); border-color: var(--accent); }
+.budget-card-summary { display: grid; width: 100%; gap: 15px; margin-top: 15px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .budget-amounts { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 25px; }
 .budget-amounts > span { display: grid; gap: 4px; }
 .budget-amounts small { color: var(--muted); font-size: 10px; }
 .budget-amounts strong { font-size: 18px; font-variant-numeric: tabular-nums; }
 .budget-progress { display: block; height: 8px; overflow: hidden; border-radius: 99px; background: color-mix(in srgb, var(--budget-accent) 13%, var(--line)); }
 .budget-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--budget-accent); transition: width .25s ease; }
-.budget-card-footer { color: var(--muted); font-size: 10px; }
+.budget-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 10px; }
 .budget-progress.unavailable { background: var(--line); }
 .budget-progress.unavailable > span { background: transparent; }
+.budget-detail { display: grid; gap: 18px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.budget-detail-section { display: grid; gap: 10px; min-width: 0; }
+.budget-detail-section h3 { margin: 0; color: var(--muted); font-size: 11px; font-weight: 650; }
+.budget-remaining-chart svg { display: block; width: 100%; min-width: 500px; height: auto; overflow: visible; }
+.budget-remaining-line { fill: none; stroke: var(--budget-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.budget-account-bar { display: flex; width: 100%; height: 13px; overflow: hidden; border-radius: 999px; background: var(--line); }
+.budget-account-bar > span { min-width: 2px; height: 100%; transition: width .2s ease; }
+.budget-account-legend { display: flex; flex-wrap: wrap; gap: 8px 15px; }
+.budget-account-legend > span { display: grid; grid-template-columns: 8px minmax(0, auto); align-items: center; column-gap: 6px; row-gap: 2px; min-width: 100px; font-size: 9px; }
+.budget-account-legend i { grid-row: span 2; width: 8px; height: 8px; border-radius: 50%; }
+.budget-account-legend strong { overflow: hidden; max-width: 150px; text-overflow: ellipsis; white-space: nowrap; }
+.budget-account-legend small { color: var(--muted); font-size: 9px; }
+.budget-recent-list { display: grid; }
+.budget-recent-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.budget-recent-row:last-child { border-bottom: 0; }
+.budget-recent-row > span { display: grid; min-width: 0; gap: 3px; }
+.budget-recent-row strong { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.budget-recent-row small { color: var(--muted); font-size: 9px; }
+.budget-recent-row b { flex: 0 0 auto; color: var(--expense, #b65e58); font-size: 10px; font-variant-numeric: tabular-nums; }
+.budget-detail-empty { margin: 0; color: var(--muted); font-size: 10px; }
 .budget-rates-status { margin: -4px 0 10px; color: var(--muted); font-size: 10px; }
 .budget-empty { min-height: 220px; }
 .budget-empty .primary-button { width: auto; margin-top: 15px; }
