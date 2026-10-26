@@ -2313,17 +2313,9 @@ h2 {
     font-variant-numeric: tabular-nums;
 }
 
-.income-source-footer {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 10px;
-}
-.income-source-count { display: grid; flex: 0 0 auto; justify-items: end; gap: 1px; }
+.income-source-count { display: grid; flex: 0 0 auto; align-self: end; justify-items: end; gap: 2px; text-align: right; }
 .income-source-count small { color: var(--muted); font-size: 10px; }
-.income-source-count strong { color: var(--positive, #557b63); font-size: 15px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.income-source-count strong { color: var(--positive, #557b63); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
 
 .income-source-detail {
     display: grid;

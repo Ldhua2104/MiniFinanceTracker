@@ -780,8 +780,7 @@ function IncomeSourceCard({ data, accounts, reportCurrency, locale, t, onEdit })
     <button type="button" className="income-source-edit" onClick={onEdit} aria-label={`${t('editIncomeSource')}: ${name}`} title={t('editIncomeSource')}>✎</button>
     <button type="button" className="income-source-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
       <span className="income-source-heading"><strong>{name}</strong><span className="budget-currency">{reportCurrency}</span><svg className="budget-expand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span>
-      <span className="income-source-totals"><span><small>{t('incomeThisMonth')}</small><strong>{total === null ? '—' : formatSignedCents(total, locale, reportCurrency, '+')}</strong></span></span>
-      <span className="income-source-footer"><span>{t('expandIncomeHint')}</span><span className="income-source-count"><small>{t('incomeRecordCount')}</small><strong>{data.records.length}</strong></span></span>
+      <span className="income-source-totals"><span><small>{t('incomeThisMonth')}</small><strong>{total === null ? '—' : formatSignedCents(total, locale, reportCurrency, '+')}</strong></span><span className="income-source-count"><small>{t('incomeRecordCount')}</small><strong>{data.records.length}</strong></span></span>
     </button>
     {expanded && <section className="income-source-detail" aria-label={`${name} ${t('incomeDetails')}`}>
       <div className="income-detail-section">
