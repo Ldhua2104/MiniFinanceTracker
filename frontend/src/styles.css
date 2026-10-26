@@ -1486,10 +1486,7 @@ h2 {
     white-space: nowrap;
 }
 
-.account-switch-chevron {
-    color: var(--muted);
-    font-size: 14px;
-}
+.account-switch-chevron { flex: 0 0 16px; }
 
 .transaction-account-options {
     display: flex;
@@ -1679,16 +1676,9 @@ h2 {
     display: none;
 }
 
-.activity-filters>summary::after {
-    margin-left: auto;
-    color: var(--muted);
-    content: '⌄';
-    font-size: 15px;
-}
-
-.activity-filters[open]>summary::after {
-    content: '⌃';
-}
+.activity-filters>summary .budget-expand-mark { margin-left: auto; }
+.activity-filters[open]>summary .budget-expand-mark,
+.budget-expand-mark.is-open { transform: rotate(180deg); }
 
 .activity-filter-count {
     display: inline-grid;
