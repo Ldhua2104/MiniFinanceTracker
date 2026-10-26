@@ -38,3 +38,5 @@ The UI supports English and Chinese, initially selected from the browser languag
 ## Configuration
 
 All secrets belong in the backend `.env`; do not add secrets to frontend `VITE_` variables. The example environment file contains placeholders only. Production disables automatic index creation; run the versioned database initialization command during deployment.
+
+To store user-supplied AI API keys, configure `AI_CREDENTIALS_ENCRYPTION_KEY` as a base64-encoded 32-byte random key. For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"` and keep it in the backend secret manager or `.env`. Do not commit it. Keep a protected backup and retain the same key across deployments: existing AI credentials cannot be decrypted if this key is lost or replaced. The backend encrypts each saved settings payload with AES-256-GCM and a fresh random nonce. Anonymous browser settings use Web Crypto AES-GCM; the non-extractable key is stored by IndexedDB while the encrypted payload is stored in `localStorage`. Successful sign-in migrates the configuration to the account and then removes the local encrypted payload and key.

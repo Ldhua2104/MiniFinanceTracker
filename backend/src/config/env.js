@@ -13,6 +13,11 @@ const envSchema = z.object({
   DEEPSEEK_BASE_URL: z.string().url().default('https://api.deepseek.com'),
   DEEPSEEK_API_KEY: z.string().optional().default(''),
   DEEPSEEK_MODEL: z.string().optional().default(''),
+  AI_CREDENTIALS_ENCRYPTION_KEY: z.string().optional().default('').refine((value) => {
+    if (!value) return true;
+    const decoded = Buffer.from(value, 'base64');
+    return decoded.length === 32 && decoded.toString('base64') === value;
+  }, 'AI_CREDENTIALS_ENCRYPTION_KEY must be a base64-encoded 32-byte key'),
   RESEND_API_KEY: z.string().optional().default(''),
   EMAIL_FROM: z.string().optional().default(''),
   ADMIN_EMAIL: z.preprocess((value) => value === '' ? undefined : value, z.string().email().optional()),
@@ -29,5 +34,10 @@ export const env = Object.freeze(parsed.data);
 
 if (env.NODE_ENV === 'production' && env.JWT_SECRET === 'development-only-change-this-secret') {
   console.error('JWT_SECRET must be configured with a production secret before starting the server.');
+  process.exit(1);
+}
+
+if (env.NODE_ENV === 'production' && !env.AI_CREDENTIALS_ENCRYPTION_KEY) {
+  console.error('AI_CREDENTIALS_ENCRYPTION_KEY must be configured before starting the production server. Generate 32 random bytes and encode them as base64.');
   process.exit(1);
 }

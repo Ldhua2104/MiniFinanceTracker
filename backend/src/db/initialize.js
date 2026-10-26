@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { connectDatabase, disconnectDatabase } from './connect.js';
-import { User, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, EmailVerification, Workspace } from '../models/index.js';
+import { User, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification, Workspace } from '../models/index.js';
 
 const definitions = [
   [User, { bsonType: 'object', required: ['email', 'passwordHash', 'role', 'status', 'baseCurrency'], properties: {
@@ -26,6 +26,11 @@ const definitions = [
   } }],
   [AiAnalysis, { bsonType: 'object', required: ['userId', 'month', 'dataRevision', 'status', 'inputSummary'], properties: {
     userId: { bsonType: 'objectId' }, month: { bsonType: 'string', pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, dataRevision: { bsonType: ['int', 'long'], minimum: 0 }, status: { enum: ['pending', 'processing', 'completed', 'failed'] }, inputSummary: { bsonType: 'object' }
+  } }],
+  [AiSettings, { bsonType: 'object', required: ['userId', 'encryptedSettings'], properties: {
+    userId: { bsonType: 'objectId' }, encryptedSettings: { bsonType: 'object', required: ['ciphertext', 'iv', 'authTag', 'keyVersion'], properties: {
+      ciphertext: { bsonType: 'string' }, iv: { bsonType: 'string' }, authTag: { bsonType: 'string' }, keyVersion: { bsonType: ['int', 'long', 'double'], minimum: 1 }
+    } }
   } }],
   [EmailVerification, { bsonType: 'object', required: ['userId', 'codeHash', 'expiresAt', 'attempts'], properties: {
     userId: { bsonType: 'objectId' }, codeHash: { bsonType: 'string' }, expiresAt: { bsonType: 'date' }, attempts: { bsonType: 'int', minimum: 0, maximum: 5 }, consumedAt: { bsonType: ['date', 'null'] }

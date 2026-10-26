@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
-import { User, Workspace } from '../models/index.js';
+import { AiSettings, User, Workspace } from '../models/index.js';
 import { MAX_IMAGE_BYTES, profileInput, registerInput } from '../domain/validation.js';
 import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
+import { decryptAiSettings, encryptAiSettings } from '../services/ai-settings-crypto.js';
 
 export const authRouter = Router();
 const transactionImageRoot = fileURLToPath(new URL('../../storage/transaction-images/', import.meta.url));
@@ -32,6 +33,39 @@ const recurringInput = z.object({
   if (!rule.enabled) return;
   if (!rule.schedule || !rule.time || !rule.nextRunDate) context.addIssue({ code: 'custom', message: 'Enabled recurring transactions require a schedule, time and next run date' });
   if (['custom', 'same-day'].includes(rule.schedule) && !rule.dayOfMonth) context.addIssue({ code: 'custom', path: ['dayOfMonth'], message: 'This recurrence requires a day of month' });
+});
+const aiSettingsInput = z.object({
+  providers: z.array(z.object({
+    id: z.string().min(1).max(80),
+    type: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
+    endpoint: z.string().max(500).default('')
+  }).strict()).max(20),
+  models: z.array(z.object({
+    id: z.string().min(1).max(80),
+    providerId: z.string().min(1).max(80),
+    name: z.string().trim().min(1).max(120)
+  }).strict()).max(100),
+  assignments: z.object({
+    receipt: z.string().max(80).default(''),
+    conversation: z.string().max(80).default(''),
+    tools: z.string().max(80).default('')
+  }).strict(),
+  apiKeys: z.record(z.string().max(80), z.string().max(4096)).default({}),
+  clearApiKeys: z.array(z.string().max(80)).max(20).default([])
+}).strict().superRefine((settings, context) => {
+  const providerIds = new Set(settings.providers.map((provider) => provider.id));
+  const modelIds = new Set(settings.models.map((model) => model.id));
+  if (providerIds.size !== settings.providers.length) context.addIssue({ code: 'custom', path: ['providers'], message: 'Provider ids must be unique' });
+  if (modelIds.size !== settings.models.length) context.addIssue({ code: 'custom', path: ['models'], message: 'Model ids must be unique' });
+  settings.models.forEach((model, index) => {
+    if (!providerIds.has(model.providerId)) context.addIssue({ code: 'custom', path: ['models', index, 'providerId'], message: 'Model provider does not exist' });
+  });
+  Object.entries(settings.assignments).forEach(([task, modelId]) => {
+    if (modelId && !modelIds.has(modelId)) context.addIssue({ code: 'custom', path: ['assignments', task], message: 'Assigned model does not exist' });
+  });
+  Object.keys(settings.apiKeys).forEach((providerId) => {
+    if (!providerIds.has(providerId)) context.addIssue({ code: 'custom', path: ['apiKeys', providerId], message: 'API key provider does not exist' });
+  });
 });
 
 const workspaceInput = z.object({
@@ -263,4 +297,108 @@ authRouter.put('/workspace', requireCsrf, requireUser, async (req, res, next) =>
     }
     next(error);
   }
+});
+
+const emptyAiSettings = () => ({ providers: [], models: [], assignments: { receipt: '', conversation: '', tools: '' }, apiKeys: {} });
+
+function publicAiSettings(settings) {
+  return {
+    providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint, hasApiKey: Boolean(settings.apiKeys[id]) })),
+    models: settings.models,
+    assignments: settings.assignments
+  };
+}
+
+function parseAiSettingsRequest(req, res) {
+  try {
+    return aiSettingsInput.parse(req.body);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'AI settings are invalid', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
+      return null;
+    }
+    throw error;
+  }
+}
+
+function sendAiSettingsError(error, req, res, next) {
+  if (error.code === 'AI_ENCRYPTION_NOT_CONFIGURED') {
+    return res.status(503).json({ error: { code: error.code, message: 'AI credential storage is not configured on this server' }, meta: { requestId: req.requestId } });
+  }
+  if (error.code === 'AI_ENCRYPTION_KEY_VERSION_UNSUPPORTED') {
+    return res.status(503).json({ error: { code: error.code, message: 'Stored AI credentials require a newer encryption key version' }, meta: { requestId: req.requestId } });
+  }
+  return next(error);
+}
+
+async function readAiSettings(userId) {
+  const record = await AiSettings.findOne({ userId }).lean();
+  return record ? decryptAiSettings(record.encryptedSettings, userId) : emptyAiSettings();
+}
+
+async function writeAiSettings(userId, settings) {
+  const encryptedSettings = encryptAiSettings(settings, userId);
+  await AiSettings.findOneAndUpdate(
+    { userId },
+    { $set: { encryptedSettings } },
+    { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+  );
+}
+
+authRouter.get('/ai-settings', requireUser, async (req, res, next) => {
+  try {
+    const settings = await readAiSettings(req.user._id);
+    res.json({ data: publicAiSettings(settings), meta: { requestId: req.requestId } });
+  } catch (error) { sendAiSettingsError(error, req, res, next); }
+});
+
+authRouter.put('/ai-settings', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const input = parseAiSettingsRequest(req, res);
+    if (!input) return;
+    const previous = await readAiSettings(req.user._id);
+    const providers = new Set(input.providers.map((provider) => provider.id));
+    const apiKeys = Object.fromEntries(Object.entries(previous.apiKeys).filter(([providerId]) => providers.has(providerId)));
+    input.clearApiKeys.forEach((providerId) => { delete apiKeys[providerId]; });
+    Object.entries(input.apiKeys).forEach(([providerId, apiKey]) => {
+      if (apiKey.trim()) apiKeys[providerId] = apiKey.trim();
+    });
+    const settings = { providers: input.providers, models: input.models, assignments: input.assignments, apiKeys };
+    await writeAiSettings(req.user._id, settings);
+    res.json({ data: publicAiSettings(settings), meta: { requestId: req.requestId } });
+  } catch (error) { sendAiSettingsError(error, req, res, next); }
+});
+
+authRouter.post('/ai-settings/migrate', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const input = parseAiSettingsRequest(req, res);
+    if (!input) return;
+    const existing = await readAiSettings(req.user._id);
+    const providerMap = new Map(existing.providers.map((provider) => [provider.id, provider]));
+    input.providers.forEach((provider) => { if (!providerMap.has(provider.id)) providerMap.set(provider.id, provider); });
+    const providers = [...providerMap.values()];
+    const providerIds = new Set(providers.map((provider) => provider.id));
+    const apiKeys = Object.fromEntries(Object.entries(existing.apiKeys).filter(([providerId]) => providerIds.has(providerId)));
+    Object.entries(input.apiKeys).forEach(([providerId, apiKey]) => {
+      if (!apiKeys[providerId] && providerIds.has(providerId) && apiKey.trim()) apiKeys[providerId] = apiKey.trim();
+    });
+    const modelMap = new Map(existing.models.map((model) => [model.id, model]));
+    input.models.forEach((model) => { if (!modelMap.has(model.id) && providerIds.has(model.providerId)) modelMap.set(model.id, model); });
+    const models = [...modelMap.values()];
+    const modelIds = new Set(models.map((model) => model.id));
+    const assignments = Object.fromEntries(Object.entries(existing.assignments).map(([task, modelId]) => [
+      task,
+      modelId && modelIds.has(modelId) ? modelId : (modelIds.has(input.assignments[task]) ? input.assignments[task] : '')
+    ]));
+    const settings = { providers, models, assignments, apiKeys };
+    await writeAiSettings(req.user._id, settings);
+    res.json({ data: publicAiSettings(settings), meta: { requestId: req.requestId } });
+  } catch (error) { sendAiSettingsError(error, req, res, next); }
+});
+
+authRouter.delete('/ai-settings', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    await AiSettings.deleteOne({ userId: req.user._id });
+    res.status(204).end();
+  } catch (error) { next(error); }
 });

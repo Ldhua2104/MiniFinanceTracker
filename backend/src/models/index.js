@@ -5,5 +5,6 @@ export { Budget } from './budget.model.js';
 export { Notification } from './notification.model.js';
 export { EmailJob } from './email-job.model.js';
 export { AiAnalysis } from './ai-analysis.model.js';
+export { AiSettings } from './ai-settings.model.js';
 export { EmailVerification } from './email-verification.model.js';
 export { Workspace } from './workspace.model.js';

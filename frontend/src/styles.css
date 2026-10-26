@@ -2438,6 +2438,279 @@ h2 {
     font-size: 11px;
 }
 
+.ai-settings-section {
+    display: grid;
+    gap: 14px;
+    max-width: 760px;
+    margin-top: 28px;
+}
+
+.ai-settings-heading h2 {
+    margin: 5px 0;
+    font-size: 20px;
+}
+
+.ai-settings-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.ai-save-status {
+    color: var(--muted);
+    font-size: 10px;
+    text-align: right;
+}
+
+.ai-settings-heading p,
+.ai-step-heading p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.ai-config-card {
+    display: grid;
+    gap: 16px;
+    padding: 19px 20px;
+}
+
+.ai-step-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+}
+
+.ai-step-heading > span {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.ai-step-heading h3 {
+    margin: 2px 0 4px;
+    font-size: 14px;
+}
+
+.ai-provider-form,
+.ai-model-form {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.8fr);
+    align-items: end;
+    gap: 12px;
+}
+
+.ai-model-form {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+}
+
+.ai-endpoint-control {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.ai-endpoint-control input {
+    flex: 1 1 auto;
+}
+
+.ai-model-control {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.ai-model-control input {
+    flex: 1 1 auto;
+}
+
+.ai-provider-form .field,
+.ai-model-form .field,
+.ai-provider-item .field {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.ai-provider-form input,
+.ai-provider-form select,
+.ai-model-form input,
+.ai-model-form select,
+.ai-provider-item input,
+.ai-task-row select {
+    min-width: 0;
+    width: 100%;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+}
+
+.ai-model-form .secondary-button {
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+.ai-model-control .secondary-button {
+    flex: 0 0 auto;
+}
+
+.ai-endpoint-control .secondary-button {
+    min-height: 38px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.ai-provider-list,
+.ai-model-list {
+    display: grid;
+    gap: 9px;
+}
+
+.ai-provider-item,
+.ai-model-item {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface-soft);
+}
+
+.ai-provider-title,
+.ai-model-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.ai-provider-title strong,
+.ai-model-item strong {
+    font-size: 12px;
+}
+
+.ai-provider-endpoint,
+.ai-model-item small {
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.ai-model-item > span {
+    display: grid;
+    gap: 3px;
+}
+
+.ai-key-input {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.ai-key-input button,
+.ai-remove-button {
+    padding: 6px 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.ai-key-input .ai-visibility-button {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    place-items: center;
+    padding: 0;
+}
+
+.ai-visibility-button svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
+}
+
+.ai-remove-button {
+    border-color: #efc7c2;
+    color: #b95349;
+}
+
+.ai-empty-state {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.ai-task-list {
+    display: grid;
+}
+
+.ai-task-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 11px 0;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+}
+
+.ai-task-row select {
+    width: min(240px, 55%);
+}
+
+.ai-config-card button:disabled,
+.ai-config-card select:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+    .ai-provider-form,
+    .ai-model-form {
+        grid-template-columns: 1fr;
+    }
+
+    .ai-endpoint-control .secondary-button {
+        width: auto;
+    }
+
+    .ai-model-control .secondary-button {
+        width: auto;
+    }
+
+    .ai-task-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .ai-task-row select {
+        width: 100%;
+    }
+}
+
 /* Transaction category chips and date-grouped activity */
 .category-chip-list {
     display: flex;
