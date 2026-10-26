@@ -2509,8 +2509,18 @@ h2 {
     gap: 12px;
 }
 
+.ai-provider-form {
+    grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1.2fr) minmax(0, 1.2fr) auto;
+}
+
+.ai-provider-form > .secondary-button {
+    min-height: 38px;
+    align-self: end;
+    white-space: nowrap;
+}
+
 .ai-model-form {
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr) auto;
 }
 
 .ai-endpoint-control {
@@ -2589,6 +2599,148 @@ h2 {
     border: 1px solid var(--line);
     border-radius: 12px;
     background: var(--surface-soft);
+}
+
+.ai-provider-item:not(.is-editing) {
+    padding: 0;
+    overflow: hidden;
+}
+
+.ai-provider-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(120px, auto) auto;
+    align-items: center;
+    gap: 16px;
+    min-height: 74px;
+    padding: 13px 14px;
+}
+
+.ai-provider-summary:hover {
+    background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+}
+
+.ai-provider-summary-name,
+.ai-provider-summary-key {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.ai-provider-summary-name strong,
+.ai-provider-summary-key strong {
+    font-size: 12px;
+}
+
+.ai-provider-summary-name small,
+.ai-provider-summary-key small {
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.ai-provider-summary-key strong {
+    letter-spacing: 1.2px;
+}
+
+.ai-provider-summary-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.ai-provider-edit-icon {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+}
+
+.ai-provider-edit-icon:hover {
+    border-color: var(--accent);
+    color: var(--accent-dark);
+}
+
+.ai-provider-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.ai-provider-item.is-editing {
+    position: relative;
+    padding-top: 16px;
+}
+
+.ai-provider-item.is-editing .ai-provider-title {
+    min-height: 25px;
+    padding-right: 32px;
+}
+
+.ai-provider-item.is-editing .ai-provider-close {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    z-index: 1;
+    width: 25px;
+    height: 25px;
+    flex: 0 0 25px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #bf5148;
+    font-size: 19px;
+    line-height: 1;
+}
+
+.ai-provider-item.is-editing .ai-provider-close:hover {
+    background: #fde9e6;
+    color: #a53e37;
+}
+
+.ai-provider-save-button,
+.ai-provider-delete-button {
+    min-height: 40px;
+    padding: 0 17px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+    transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.ai-provider-save-button {
+    background: var(--accent-dark);
+    color: #f8fbf8;
+}
+
+.ai-provider-save-button:hover {
+    background: #294735;
+    box-shadow: 0 5px 12px #243b2b20;
+    transform: translateY(-1px);
+}
+
+.ai-provider-delete-button {
+    border-color: #e9b8b3;
+    background: #fff5f4;
+    color: #b8463e;
+}
+
+.ai-provider-delete-button:hover {
+    border-color: #d98981;
+    background: #fde7e4;
+    box-shadow: 0 5px 12px #7b292019;
+    transform: translateY(-1px);
 }
 
 .ai-provider-title,
@@ -2693,6 +2845,10 @@ h2 {
         grid-template-columns: 1fr;
     }
 
+    .ai-provider-form > .secondary-button {
+        width: 100%;
+    }
+
     .ai-endpoint-control .secondary-button {
         width: auto;
     }
@@ -2708,6 +2864,20 @@ h2 {
 
     .ai-task-row select {
         width: 100%;
+    }
+
+    .ai-provider-summary {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+    }
+
+    .ai-provider-summary-key {
+        grid-column: 1;
+    }
+
+    .ai-provider-summary-actions {
+        grid-column: 2;
+        grid-row: 1 / span 2;
     }
 }
 

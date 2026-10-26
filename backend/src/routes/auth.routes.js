@@ -43,7 +43,8 @@ const aiSettingsInput = z.object({
   models: z.array(z.object({
     id: z.string().min(1).max(80),
     providerId: z.string().min(1).max(80),
-    name: z.string().trim().min(1).max(120)
+    name: z.string().trim().min(1).max(120),
+    customName: z.string().trim().max(120).optional().default('')
   }).strict()).max(100),
   assignments: z.object({
     receipt: z.string().max(80).default(''),

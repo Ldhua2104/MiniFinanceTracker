@@ -1374,20 +1374,20 @@ function PlaceholderPage({ title, detail }) {
 function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat, user }) {
   const [migrationNotice, setMigrationNotice] = useState(false);
   const [aiConfig, setAiConfig] = useState(emptyAiSettings);
-  const [providerDraft, setProviderDraft] = useState({ type: 'openai', endpoint: '' });
-  const [modelDraft, setModelDraft] = useState({ providerId: '', name: '' });
+  const [providerDraft, setProviderDraft] = useState({ type: 'openai', endpoint: '', apiKey: '' });
+  const [modelDraft, setModelDraft] = useState({ providerId: '', name: '', customName: '' });
   const [providerKeys, setProviderKeys] = useState({});
   const [showKeys, setShowKeys] = useState({});
-  const [clearApiKeys, setClearApiKeys] = useState([]);
-  const [aiLoaded, setAiLoaded] = useState(false);
+  const [showProviderDraftKey, setShowProviderDraftKey] = useState(false);
+  const [editingProviderId, setEditingProviderId] = useState(null);
+  const [editingEndpointDraft, setEditingEndpointDraft] = useState('');
+  const [editingOriginalProvider, setEditingOriginalProvider] = useState(null);
+  const [editingOriginalKey, setEditingOriginalKey] = useState('');
   const [aiSaveStatus, setAiSaveStatus] = useState('');
-  const savedAiSnapshot = useRef('');
 
   useEffect(() => {
     let active = true;
-    setAiLoaded(false);
     setAiSaveStatus('');
-    savedAiSnapshot.current = '';
     async function loadAiSettings() {
       try {
         if (user) {
@@ -1396,13 +1396,11 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
           if (!active) return;
           setAiConfig(response);
           setProviderKeys({});
-          savedAiSnapshot.current = JSON.stringify({ aiConfig: response, providerKeys: {}, clearApiKeys: [] });
         } else {
           const local = await loadLocalAiSettings();
           if (!active) return;
           setAiConfig(local.settings);
           setProviderKeys(local.apiKeys);
-          savedAiSnapshot.current = JSON.stringify({ aiConfig: local.settings, providerKeys: local.apiKeys, clearApiKeys: [] });
         }
       } catch {
         if (!active) return;
@@ -1411,128 +1409,169 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
           if (!active) return;
           setAiConfig(local.settings);
           setProviderKeys(local.apiKeys);
-          savedAiSnapshot.current = JSON.stringify({ aiConfig: local.settings, providerKeys: local.apiKeys, clearApiKeys: [] });
           setAiSaveStatus(t('aiMigrationPending'));
         } catch {
           const empty = emptyAiSettings();
           setAiConfig(empty);
           setProviderKeys({});
-          savedAiSnapshot.current = JSON.stringify({ aiConfig: empty, providerKeys: {}, clearApiKeys: [] });
           setAiSaveStatus(t('aiSettingsUnavailable'));
         }
-      } finally {
-        if (active) setAiLoaded(true);
       }
     }
     loadAiSettings();
     return () => { active = false; };
   }, [user?.id]);
 
-  useEffect(() => {
-    if (!aiLoaded) return undefined;
-    const snapshot = JSON.stringify({ aiConfig, providerKeys, clearApiKeys });
-    if (snapshot === savedAiSnapshot.current) return undefined;
-    const timer = window.setTimeout(async () => {
-      const settings = {
-        providers: aiConfig.providers.map(({ id, type, endpoint, hasApiKey }) => ({ id, type, endpoint, ...(hasApiKey ? { hasApiKey: true } : {}) })),
-        models: aiConfig.models,
-        assignments: aiConfig.assignments
-      };
-      if (!user) {
-        try {
-          await saveLocalAiSettings(settings, providerKeys);
-          savedAiSnapshot.current = snapshot;
-          setAiSaveStatus(t('saved'));
-        } catch {
-          setAiSaveStatus(t('aiLocalEncryptionUnavailable'));
-        }
-        return;
-      }
-      try {
-        const response = await apiRequest('/auth/ai-settings', {
-          method: 'PUT',
-          body: JSON.stringify({ ...settings, providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: providerKeys, clearApiKeys })
-        });
-        setAiConfig(response.data);
-        setProviderKeys({});
-        setClearApiKeys([]);
-        savedAiSnapshot.current = JSON.stringify({ aiConfig: response.data, providerKeys: {}, clearApiKeys: [] });
-        setAiSaveStatus(t('saved'));
-      } catch {
-        try { await saveLocalAiSettings(settings, providerKeys); } catch { /* Keep current values in memory if local storage is unavailable. */ }
-        savedAiSnapshot.current = snapshot;
-        setAiSaveStatus(t('aiServerSaveFailed'));
-      }
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [aiConfig, providerKeys, clearApiKeys, aiLoaded, user?.id]);
-
   const providerNames = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini', compatible: t('aiCompatibleProvider') };
+  const endpointPattern = /^https?:\/\/(?:(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z]{2,63}|localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?(?:\/[^\s?#]*)?(?:\?[^\s#]*)?(?:#[^\s]*)?$/i;
   const providerTypes = ['openai', 'anthropic', 'gemini', 'compatible'];
+  function normalizeEndpoint(value) {
+    const candidate = value.trim();
+    if (!candidate || !endpointPattern.test(candidate)) return '';
+    try {
+      const parsed = new URL(candidate);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
+      parsed.pathname = parsed.pathname.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
+      return parsed.href.replace(/\/$/, parsed.pathname === '/' && !parsed.search && !parsed.hash ? '' : '/');
+    } catch {
+      return '';
+    }
+  }
   const modelId = () => globalThis.crypto?.randomUUID?.() ?? `model-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const addProvider = (event) => {
+  const addProvider = async (event) => {
     event.preventDefault();
-    const provider = { id: modelId(), type: providerDraft.type, endpoint: providerDraft.endpoint.trim() };
-    setAiConfig((current) => ({ ...current, providers: [...current.providers, provider] }));
-    setProviderDraft({ type: 'openai', endpoint: '' });
+    if (!providerDraft.type || !providerDraft.endpoint.trim() || !providerDraft.apiKey.trim()) {
+      setAiSaveStatus(t('aiProviderRequiredFields'));
+      return;
+    }
+    const endpoint = normalizeEndpoint(providerDraft.endpoint);
+    if (!endpoint) {
+      setAiSaveStatus(t('aiEndpointInvalid'));
+      return;
+    }
+    const provider = { id: modelId(), type: providerDraft.type, endpoint };
+    const nextConfig = { ...aiConfig, providers: [...aiConfig.providers, provider] };
+    const nextKeys = { ...providerKeys, [provider.id]: providerDraft.apiKey.trim() };
+    if (await saveAiSettingsNow(nextConfig, nextKeys)) {
+      setProviderDraft({ type: 'openai', endpoint: '', apiKey: '' });
+      setShowProviderDraftKey(false);
+    }
   };
-  const addModel = (event) => {
+  const beginProviderEdit = (provider) => {
+    setEditingProviderId(provider.id);
+    setEditingEndpointDraft(provider.endpoint);
+    setEditingOriginalProvider(provider);
+    setEditingOriginalKey(providerKeys[provider.id] || '');
+  };
+  const closeProviderEdit = (providerId) => {
+    if (editingOriginalProvider?.id === providerId) {
+      setAiConfig((current) => ({ ...current, providers: current.providers.map((provider) => provider.id === providerId ? editingOriginalProvider : provider) }));
+      setProviderKeys((current) => {
+        const next = { ...current };
+        if (editingOriginalKey) next[providerId] = editingOriginalKey;
+        else delete next[providerId];
+        return next;
+      });
+    }
+    setEditingProviderId(null);
+    setEditingEndpointDraft('');
+    setEditingOriginalProvider(null);
+    setEditingOriginalKey('');
+  };
+  const finishProviderEdit = async (providerId) => {
+    const endpoint = normalizeEndpoint(editingEndpointDraft);
+    if (!endpoint) {
+      setAiSaveStatus(t(editingEndpointDraft.trim() ? 'aiEndpointInvalid' : 'aiEndpointRequired'));
+      return;
+    }
+    const nextConfig = { ...aiConfig, providers: aiConfig.providers.map((provider) => provider.id === providerId ? { ...provider, endpoint } : provider) };
+    const keysToSave = { ...providerKeys };
+    if (!keysToSave[providerId]?.trim() && editingOriginalKey) keysToSave[providerId] = editingOriginalKey;
+    if (await saveAiSettingsNow(nextConfig, keysToSave)) {
+      setEditingProviderId(null);
+      setEditingEndpointDraft('');
+      setEditingOriginalProvider(null);
+      setEditingOriginalKey('');
+    }
+  };
+  const addModel = async (event) => {
     event.preventDefault();
-    if (!modelDraft.providerId || !modelDraft.name.trim()) return;
-    const model = { id: modelId(), providerId: modelDraft.providerId, name: modelDraft.name.trim() };
-    setAiConfig((current) => ({ ...current, models: [...current.models, model] }));
-    setModelDraft((current) => ({ ...current, name: '' }));
+    if (!modelDraft.providerId || !modelDraft.name.trim() || !modelDraft.customName.trim()) return;
+    const model = { id: modelId(), providerId: modelDraft.providerId, name: modelDraft.name.trim(), customName: modelDraft.customName.trim() };
+    const nextConfig = { ...aiConfig, models: [...aiConfig.models, model] };
+    if (await saveAiSettingsNow(nextConfig, providerKeys)) setModelDraft((current) => ({ ...current, name: '', customName: '' }));
   };
-  const removeProvider = (providerId) => {
-    setAiConfig((current) => {
-      const models = current.models.filter((model) => model.providerId !== providerId);
-      const modelIds = new Set(models.map((model) => model.id));
-      return {
-        ...current,
-        providers: current.providers.filter((provider) => provider.id !== providerId),
-        models,
-        assignments: Object.fromEntries(Object.entries(current.assignments).map(([task, assigned]) => [task, modelIds.has(assigned) ? assigned : '']))
-      };
-    });
-    setProviderKeys((current) => { const next = { ...current }; delete next[providerId]; return next; });
+  const removeProvider = async (providerId) => {
+    if (!window.confirm(t('confirmDeleteAiProvider'))) return;
+    const models = aiConfig.models.filter((model) => model.providerId !== providerId);
+    const modelIds = new Set(models.map((model) => model.id));
+    const nextConfig = {
+      ...aiConfig,
+      providers: aiConfig.providers.filter((provider) => provider.id !== providerId),
+      models,
+      assignments: Object.fromEntries(Object.entries(aiConfig.assignments).map(([task, assigned]) => [task, modelIds.has(assigned) ? assigned : '']))
+    };
+    const nextKeys = { ...providerKeys };
+    delete nextKeys[providerId];
+    if (await saveAiSettingsNow(nextConfig, nextKeys)) {
+      if (editingProviderId === providerId) {
+        setEditingProviderId(null);
+        setEditingEndpointDraft('');
+        setEditingOriginalProvider(null);
+        setEditingOriginalKey('');
+      }
+    }
   };
-  const removeModel = (modelIdToRemove) => setAiConfig((current) => ({
-    ...current,
-    models: current.models.filter((model) => model.id !== modelIdToRemove),
-    assignments: Object.fromEntries(Object.entries(current.assignments).map(([task, assigned]) => [task, assigned === modelIdToRemove ? '' : assigned]))
-  }));
-  const clearProviderKey = (providerId) => {
-    setProviderKeys((current) => { const next = { ...current }; delete next[providerId]; return next; });
-    setClearApiKeys((current) => [...new Set([...current, providerId])]);
-    setAiConfig((current) => ({ ...current, providers: current.providers.map((provider) => provider.id === providerId ? { ...provider, hasApiKey: false } : provider) }));
+  const removeModel = async (modelIdToRemove) => {
+    if (!window.confirm(t('confirmDeleteAiModel'))) return;
+    const nextConfig = {
+      ...aiConfig,
+      models: aiConfig.models.filter((model) => model.id !== modelIdToRemove),
+      assignments: Object.fromEntries(Object.entries(aiConfig.assignments).map(([task, assigned]) => [task, assigned === modelIdToRemove ? '' : assigned]))
+    };
+    await saveAiSettingsNow(nextConfig, providerKeys);
   };
-  async function saveAiSettingsNow(config = aiConfig, keys = providerKeys, keysToClear = clearApiKeys) {
-    const snapshot = JSON.stringify({ aiConfig: config, providerKeys: keys, clearApiKeys: keysToClear });
-    if (snapshot === savedAiSnapshot.current) return;
-    savedAiSnapshot.current = snapshot;
+  async function saveAiSettingsNow(config = aiConfig, keys = providerKeys) {
+    setAiSaveStatus(t('aiSaving'));
+    const configuredProviderIds = new Set(config.providers.map((provider) => provider.id));
+    const validModels = config.models.filter((model) => configuredProviderIds.has(model.providerId));
+    const validModelIds = new Set(validModels.map((model) => model.id));
+    config = {
+      ...config,
+      models: validModels,
+      assignments: Object.fromEntries(Object.entries(config.assignments).map(([task, assigned]) => [task, validModelIds.has(assigned) ? assigned : '']))
+    };
+    const providerIds = new Set(config.providers.map((provider) => provider.id));
+    const effectiveKeys = Object.fromEntries(Object.entries(keys).filter(([providerId, value]) => providerIds.has(providerId) && value.trim()));
     const settings = {
-      providers: config.providers.map(({ id, type, endpoint, hasApiKey }) => ({ id, type, endpoint, ...(hasApiKey ? { hasApiKey: true } : {}) })),
+      providers: config.providers.map(({ id, type, endpoint, hasApiKey }) => ({ id, type, endpoint, hasApiKey: Boolean(effectiveKeys[id] || hasApiKey) })),
       models: config.models,
       assignments: config.assignments
     };
     if (!user) {
-      try { await saveLocalAiSettings(settings, keys); setAiSaveStatus(t('saved')); }
-      catch { setAiSaveStatus(t('aiLocalEncryptionUnavailable')); }
-      return;
+      try {
+        const savedConfig = { ...config, providers: settings.providers };
+        const savedSettings = { ...settings, providers: savedConfig.providers };
+        await saveLocalAiSettings(savedSettings, effectiveKeys);
+        setAiConfig(savedConfig);
+        setProviderKeys({});
+        setAiSaveStatus(t('saved'));
+        return true;
+      }
+      catch { setAiSaveStatus(t('aiLocalEncryptionUnavailable')); return false; }
     }
     try {
       const response = await apiRequest('/auth/ai-settings', {
         method: 'PUT',
-        body: JSON.stringify({ ...settings, providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: keys, clearApiKeys: keysToClear })
+        body: JSON.stringify({ ...settings, providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: effectiveKeys })
       });
       setAiConfig(response.data);
       setProviderKeys({});
-      setClearApiKeys([]);
-      savedAiSnapshot.current = JSON.stringify({ aiConfig: response.data, providerKeys: {}, clearApiKeys: [] });
       setAiSaveStatus(t('saved'));
+      return true;
     } catch {
-      try { await saveLocalAiSettings(settings, keys); } catch { /* Keep current values in memory if local storage is unavailable. */ }
       setAiSaveStatus(t('aiServerSaveFailed'));
+      return false;
     }
   }
 
@@ -1546,26 +1585,41 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
       <header className="ai-settings-heading"><div><div className="eyebrow">{t('aiManagement')}</div><h2>{t('aiConfiguration')}</h2><p>{t('aiSettingsHint')}</p></div>{aiSaveStatus && <small className="ai-save-status">{aiSaveStatus}</small>}</header>
       <article className="panel ai-config-card">
         <div className="ai-step-heading"><span>1</span><div><h3>{t('aiProviders')}</h3><p>{t('aiProviderHint')}</p></div></div>
-        <form className="ai-provider-form" onSubmit={addProvider}>
+        <form className="ai-provider-form" onSubmit={addProvider} noValidate>
           <label className="field"><span>{t('aiProvider')}</span><select value={providerDraft.type} onChange={(event) => setProviderDraft((current) => ({ ...current, type: event.target.value }))}>{providerTypes.map((type) => <option key={type} value={type}>{providerNames[type]}</option>)}</select></label>
-          <label className="field ai-endpoint-field"><span>{t('aiEndpoint')}</span><div className="ai-endpoint-control"><input type="url" value={providerDraft.endpoint} onChange={(event) => setProviderDraft((current) => ({ ...current, endpoint: event.target.value }))} placeholder={providerDraft.type === 'compatible' ? 'https://api.example.com/v1' : t('aiEndpointOptional')} /><button className="secondary-button" type="submit">{t('aiAddProvider')}</button></div></label>
+          <label className="field"><span>{t('aiEndpoint')}</span><input type="url" value={providerDraft.endpoint} onChange={(event) => { setProviderDraft((current) => ({ ...current, endpoint: event.target.value })); setAiSaveStatus(''); }} onBlur={() => { if (providerDraft.endpoint.trim() && !normalizeEndpoint(providerDraft.endpoint)) setAiSaveStatus(t('aiEndpointInvalid')); }} placeholder="https://api.example.com/v1" /></label>
+          <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showProviderDraftKey ? 'text' : 'password'} autoComplete="new-password" value={providerDraft.apiKey} onChange={(event) => setProviderDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder={t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showProviderDraftKey ? t('hide') : t('show')} title={showProviderDraftKey ? t('hide') : t('show')} onClick={() => setShowProviderDraftKey((current) => !current)}><svg viewBox="0 0 24 24" aria-hidden="true">{showProviderDraftKey ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button></div></label>
+          <button className="secondary-button" type="submit" disabled={!providerDraft.type || !providerDraft.endpoint.trim() || !normalizeEndpoint(providerDraft.endpoint) || !providerDraft.apiKey.trim()}>{t('aiAddProvider')}</button>
         </form>
-        {aiConfig.providers.length > 0 ? <div className="ai-provider-list">{aiConfig.providers.map((provider) => <div className="ai-provider-item" key={provider.id}>
-          <div className="ai-provider-title"><strong>{providerNames[provider.type] || provider.type}</strong><button className="ai-remove-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></div>
-          {provider.endpoint && <small className="ai-provider-endpoint">{provider.endpoint}</small>}
-          <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="new-password" value={providerKeys[provider.id] || ''} onChange={(event) => setProviderKeys((current) => ({ ...current, [provider.id]: event.target.value }))} onBlur={() => saveAiSettingsNow()} placeholder={provider.hasApiKey ? t('aiKeySaved') : t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showKeys[provider.id] ? t('hide') : t('show')} title={showKeys[provider.id] ? t('hide') : t('show')} onClick={() => setShowKeys((current) => ({ ...current, [provider.id]: !current[provider.id] }))}><svg viewBox="0 0 24 24" aria-hidden="true">{showKeys[provider.id] ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button>{provider.hasApiKey && <button type="button" onClick={() => clearProviderKey(provider.id)}>{t('aiRemoveKey')}</button>}</div></label>
-        </div>)}</div> : <p className="ai-empty-state">{t('aiNoProviders')}</p>}
+        {aiConfig.providers.length > 0 ? <div className="ai-provider-list">{aiConfig.providers.map((provider) => {
+          const isEditing = editingProviderId === provider.id;
+          const keyIsAvailable = provider.hasApiKey || Boolean(providerKeys[provider.id]?.trim());
+          return <div className={`ai-provider-item ${isEditing ? 'is-editing' : ''}`} key={provider.id}>
+            {!isEditing ? <div className="ai-provider-summary">
+              <span className="ai-provider-summary-name"><strong>{providerNames[provider.type] || provider.type}</strong><small>{provider.endpoint}</small></span>
+              <span className="ai-provider-summary-key"><small>{t('aiApiKey')}</small><strong>{keyIsAvailable ? '••••••••••••' : t('aiKeyNotSet')}</strong></span>
+              <span className="ai-provider-summary-actions"><button className="ai-provider-edit-icon" type="button" aria-label={t('aiEditProvider')} title={t('aiEditProvider')} onClick={() => beginProviderEdit(provider)}>✎</button><button className="ai-remove-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></span>
+            </div> : <>
+              <div className="ai-provider-title"><strong>{providerNames[provider.type] || provider.type}</strong><button className="icon-button close-editor ai-provider-close" type="button" aria-label={t('close')} title={t('close')} onClick={() => closeProviderEdit(provider.id)}>×</button></div>
+              <label className="field"><span>{t('aiEndpoint')}</span><input type="url" value={editingEndpointDraft} onChange={(event) => { setEditingEndpointDraft(event.target.value); setAiSaveStatus(''); }} onBlur={() => { const normalized = normalizeEndpoint(editingEndpointDraft); if (normalized) setEditingEndpointDraft(normalized); }} /></label>
+              <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="new-password" value={providerKeys[provider.id] || ''} onChange={(event) => setProviderKeys((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={provider.hasApiKey ? t('aiKeySaved') : t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showKeys[provider.id] ? t('hide') : t('show')} title={showKeys[provider.id] ? t('hide') : t('show')} onClick={() => setShowKeys((current) => ({ ...current, [provider.id]: !current[provider.id] }))}><svg viewBox="0 0 24 24" aria-hidden="true">{showKeys[provider.id] ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button></div></label>
+              <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" onClick={() => finishProviderEdit(provider.id)}>{t('aiSaveChanges')}</button><button className="ai-provider-delete-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></div>
+            </>}
+          </div>;
+        })}</div> : <p className="ai-empty-state">{t('aiNoProviders')}</p>}
       </article>
 
       <article className="panel ai-config-card">
         <div className="ai-step-heading"><span>2</span><div><h3>{t('aiModels')}</h3><p>{t('aiModelHint')}</p></div></div>
         <form className="ai-model-form" onSubmit={addModel}>
           <label className="field"><span>{t('aiProvider')}</span><select value={modelDraft.providerId} onChange={(event) => setModelDraft((current) => ({ ...current, providerId: event.target.value }))} disabled={!aiConfig.providers.length}><option value="">{t('aiChooseProvider')}</option>{aiConfig.providers.map((provider) => <option key={provider.id} value={provider.id}>{providerNames[provider.type] || provider.type}</option>)}</select></label>
-          <label className="field"><span>{t('aiModelName')}</span><div className="ai-model-control"><input value={modelDraft.name} onChange={(event) => setModelDraft((current) => ({ ...current, name: event.target.value }))} placeholder={t('aiModelPlaceholder')} /><button className="secondary-button" type="submit" disabled={!aiConfig.providers.length || !modelDraft.name.trim()}>{t('aiAddModel')}</button></div></label>
+          <label className="field"><span>{t('aiModelName')}</span><input value={modelDraft.name} onChange={(event) => setModelDraft((current) => ({ ...current, name: event.target.value }))} placeholder={t('aiModelPlaceholder')} /></label>
+          <label className="field"><span>{t('aiModelCustomName')}</span><input value={modelDraft.customName} onChange={(event) => setModelDraft((current) => ({ ...current, customName: event.target.value }))} placeholder={t('aiModelCustomNamePlaceholder')} /></label>
+          <button className="secondary-button" type="submit" disabled={!aiConfig.providers.length || !modelDraft.name.trim() || !modelDraft.customName.trim()}>{t('aiAddModel')}</button>
         </form>
         {aiConfig.models.length > 0 && <div className="ai-model-list">{aiConfig.models.map((model) => {
           const provider = aiConfig.providers.find((item) => item.id === model.providerId);
-          return <div className="ai-model-item" key={model.id}><span><strong>{model.name}</strong><small>{providerNames[provider?.type] || provider?.type}</small></span><button className="ai-remove-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>;
+          return <div className="ai-model-item" key={model.id}><span><strong>{model.customName || model.name}</strong><small>{model.name} · {providerNames[provider?.type] || provider?.type}</small></span><button className="ai-remove-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>;
         })}</div>}
       </article>
 
@@ -1573,7 +1627,8 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
         <div className="ai-step-heading"><span>3</span><div><h3>{t('aiTaskAssignments')}</h3><p>{t('aiTaskHint')}</p></div></div>
         <div className="ai-task-list">{[
           ['receipt', 'aiTaskReceipts'], ['conversation', 'aiTaskConversation'], ['tools', 'aiTaskTools']
-        ].map(([task, label]) => <label className="ai-task-row" key={task}><span>{t(label)}</span><select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length} onChange={(event) => setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } }))}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>)}</div>
+        ].map(([task, label]) => <label className="ai-task-row" key={task}><span>{t(label)}</span><select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length} onChange={(event) => setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } }))}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.customName || model.name}</option>)}</select></label>)}</div>
+        <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" onClick={() => saveAiSettingsNow()}>{t('aiSaveChanges')}</button></div>
       </article>
     </section>
     <article className="panel migration-option-card">
