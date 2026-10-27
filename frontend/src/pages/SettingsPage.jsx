@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import { emptyAiSettings, loadLocalAiSettings, migrateLocalAiSettings, saveLocalAiSettings } from '../data/ai-settings.js';
 import { PageTitle } from '../components/PageTitle.jsx';
@@ -113,6 +113,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
   const [isTestingAiTasks, setIsTestingAiTasks] = useState(false);
   const [aiTaskTestProgress, setAiTaskTestProgress] = useState(null);
   const [aiTaskTestResults, setAiTaskTestResults] = useState({});
+  const [taskAssignmentsSaved, setTaskAssignmentsSaved] = useState(false);
   const [providerKeys, setProviderKeys] = useState({});
   const [showKeys, setShowKeys] = useState({});
   const [showProviderDraftKey, setShowProviderDraftKey] = useState(false);
@@ -121,6 +122,12 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
   const [editingOriginalProvider, setEditingOriginalProvider] = useState(null);
   const [editingOriginalKey, setEditingOriginalKey] = useState('');
   const [aiSaveStatus, setAiSaveStatus] = useState('');
+  const lastAiSaveFailure = useRef('');
+
+  function invalidateTaskTests() {
+    setAiTaskTestResults({});
+    setTaskAssignmentsSaved(false);
+  }
 
   useEffect(() => {
     let active = true;
@@ -190,6 +197,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
     const nextConfig = { ...aiConfig, providers: [...aiConfig.providers, provider] };
     const nextKeys = { ...providerKeys, [provider.id]: providerDraft.apiKey.trim() };
     if (await saveAiSettingsNow(nextConfig, nextKeys)) {
+      invalidateTaskTests();
       setProviderDraft({ type: 'openai', endpoint: '', apiKey: '' });
       setShowProviderDraftKey(false);
     }
@@ -225,6 +233,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
     const keysToSave = { ...providerKeys };
     if (!keysToSave[providerId]?.trim() && editingOriginalKey) keysToSave[providerId] = editingOriginalKey;
     if (await saveAiSettingsNow(nextConfig, keysToSave)) {
+      invalidateTaskTests();
       setEditingProviderId(null);
       setEditingEndpointDraft('');
       setEditingOriginalProvider(null);
@@ -236,7 +245,10 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
     if (!modelDraft.providerId || !modelDraft.name.trim() || !modelDraft.customName.trim()) return;
     const model = { id: modelId(), providerId: modelDraft.providerId, name: modelDraft.name.trim(), customName: modelDraft.customName.trim() };
     const nextConfig = { ...aiConfig, models: [...aiConfig.models, model] };
-    if (await saveAiSettingsNow(nextConfig, providerKeys)) setModelDraft((current) => ({ ...current, name: '', customName: '' }));
+    if (await saveAiSettingsNow(nextConfig, providerKeys)) {
+      invalidateTaskTests();
+      setModelDraft((current) => ({ ...current, name: '', customName: '' }));
+    }
   };
   const beginModelEdit = (model) => {
     setEditingModelId(model.id);
@@ -257,7 +269,10 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
         customName: editingModelDraft.customName.trim()
       } : model)
     };
-    if (await saveAiSettingsNow(nextConfig, providerKeys)) closeModelEdit();
+    if (await saveAiSettingsNow(nextConfig, providerKeys)) {
+      invalidateTaskTests();
+      closeModelEdit();
+    }
   };
   const removeProvider = async (providerId) => {
     if (!window.confirm(t('confirmDeleteAiProvider'))) return;
@@ -272,6 +287,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
     const nextKeys = { ...providerKeys };
     delete nextKeys[providerId];
     if (await saveAiSettingsNow(nextConfig, nextKeys)) {
+      invalidateTaskTests();
       if (editingProviderId === providerId) {
         setEditingProviderId(null);
         setEditingEndpointDraft('');
@@ -287,10 +303,14 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
       models: aiConfig.models.filter((model) => model.id !== modelIdToRemove),
       assignments: Object.fromEntries(Object.entries(aiConfig.assignments).map(([task, assigned]) => [task, assigned === modelIdToRemove ? '' : assigned]))
     };
-    if (await saveAiSettingsNow(nextConfig, providerKeys) && editingModelId === modelIdToRemove) closeModelEdit();
+    if (await saveAiSettingsNow(nextConfig, providerKeys)) {
+      invalidateTaskTests();
+      if (editingModelId === modelIdToRemove) closeModelEdit();
+    }
   };
   async function saveAiSettingsNow(config = aiConfig, keys = providerKeys) {
     setAiSaveStatus(t('aiSaving'));
+    lastAiSaveFailure.current = '';
     const configuredProviderIds = new Set(config.providers.map((provider) => provider.id));
     const validModels = config.models.filter((model) => configuredProviderIds.has(model.providerId));
     const validModelIds = new Set(validModels.map((model) => model.id));
@@ -319,16 +339,33 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
       catch { setAiSaveStatus(t('aiLocalEncryptionUnavailable')); return false; }
     }
     try {
-      const response = await apiRequest('/auth/ai-settings', {
+      const request = {
         method: 'PUT',
         body: JSON.stringify({ ...settings, providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: effectiveKeys })
-      });
+      };
+      let response;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          response = await apiRequest('/auth/ai-settings', request);
+          break;
+        } catch (error) {
+          const transient = !error.status || error.status >= 500;
+          if (!transient || attempt === 3) throw error;
+          await new Promise((resolve) => window.setTimeout(resolve, attempt * 400));
+        }
+      }
       setAiConfig(response.data);
       setProviderKeys({});
       setAiSaveStatus(t('saved'));
       return true;
-    } catch {
-      setAiSaveStatus(t('aiServerSaveFailed'));
+    } catch (error) {
+      const fieldDetails = Object.entries(error.fields || {}).flatMap(([field, messages]) =>
+        (Array.isArray(messages) ? messages : [messages]).map((message) => `${field}: ${message}`)
+      ).join('; ');
+      const reason = [error.code || (error.status ? `HTTP ${error.status}` : 'network error'), fieldDetails].filter(Boolean).join(' · ');
+      const requestId = error.requestId ? ` · ${t('requestId')}: ${error.requestId}` : '';
+      lastAiSaveFailure.current = `${reason}${requestId}`;
+      setAiSaveStatus(`${t('aiServerSaveFailed')} (${lastAiSaveFailure.current})`);
       return false;
     }
   }
@@ -346,16 +383,16 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
     setIsTestingAiTasks(true);
     try {
       if (!await saveAiSettingsNow(configToTest, keysToTest)) {
-        setAiTaskTestResults(Object.fromEntries(tasks.map((task) => [task, { status: 'error', code: 'AI_TEST_SAVE_FAILED', attempts: 0 }])));
+        setAiTaskTestResults(Object.fromEntries(tasks.map((task) => [task, { status: 'error', code: 'AI_TEST_SAVE_FAILED', detail: lastAiSaveFailure.current, attempts: 0 }])));
         return;
       }
-      for (const task of tasks) {
+      for (const [taskIndex, task] of tasks.entries()) {
         let finalCode = 'AI_TEST_REQUEST_FAILED';
         let succeeded = false;
         let attemptsMade = 0;
         for (let attempt = 1; attempt <= 3; attempt += 1) {
           attemptsMade = attempt;
-          setAiTaskTestProgress({ task, attempt });
+          setAiTaskTestProgress({ task, attempt, taskIndex: taskIndex + 1, totalTasks: tasks.length });
           try {
             if (user) {
               await apiRequest('/auth/ai-settings/test', { method: 'POST', body: JSON.stringify({ task }) });
@@ -386,6 +423,14 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
   };
   const aiTaskDefinitions = [['receipt', 'aiTaskReceipts'], ['conversation', 'aiTaskConversation']];
   const assignedAiTaskCount = aiTaskDefinitions.filter(([task]) => aiConfig.assignments?.[task]).length;
+  const allAssignedTasksPassed = assignedAiTaskCount > 0 && aiTaskDefinitions
+    .filter(([task]) => aiConfig.assignments?.[task])
+    .every(([task]) => aiTaskTestResults[task]?.status === 'success');
+
+  async function saveTaskAssignments() {
+    if (!allAssignedTasksPassed || isTestingAiTasks || taskAssignmentsSaved) return;
+    if (await saveAiSettingsNow()) setTaskAssignmentsSaved(true);
+  }
 
   return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
     <div className="panel settings-panel">
@@ -413,8 +458,8 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
               <span className="ai-provider-summary-actions"><button className="ai-provider-edit-icon" type="button" aria-label={t('aiEditProvider')} title={t('aiEditProvider')} onClick={() => beginProviderEdit(provider)}>✎</button><button className="ai-remove-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></span>
             </div> : <>
               <div className="ai-provider-title"><strong>{providerNames[provider.type] || provider.type}</strong><button className="icon-button close-editor ai-provider-close" type="button" aria-label={t('close')} title={t('close')} onClick={() => closeProviderEdit(provider.id)}>×</button></div>
-              <label className="field"><span>{t('aiEndpoint')}</span><input type="url" value={editingEndpointDraft} onChange={(event) => { setEditingEndpointDraft(event.target.value); setAiSaveStatus(''); }} onBlur={() => { const normalized = normalizeEndpoint(editingEndpointDraft); if (normalized) setEditingEndpointDraft(normalized); }} /></label>
-              <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="new-password" value={providerKeys[provider.id] || ''} onChange={(event) => setProviderKeys((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={provider.hasApiKey ? t('aiKeySaved') : t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showKeys[provider.id] ? t('hide') : t('show')} title={showKeys[provider.id] ? t('hide') : t('show')} onClick={() => setShowKeys((current) => ({ ...current, [provider.id]: !current[provider.id] }))}><svg viewBox="0 0 24 24" aria-hidden="true">{showKeys[provider.id] ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button></div></label>
+              <label className="field"><span>{t('aiEndpoint')}</span><input type="url" value={editingEndpointDraft} onChange={(event) => { setEditingEndpointDraft(event.target.value); setAiSaveStatus(''); invalidateTaskTests(); }} onBlur={() => { const normalized = normalizeEndpoint(editingEndpointDraft); if (normalized) setEditingEndpointDraft(normalized); }} /></label>
+              <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="new-password" value={providerKeys[provider.id] || ''} onChange={(event) => { setProviderKeys((current) => ({ ...current, [provider.id]: event.target.value })); invalidateTaskTests(); }} placeholder={provider.hasApiKey ? t('aiKeySaved') : t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showKeys[provider.id] ? t('hide') : t('show')} title={showKeys[provider.id] ? t('hide') : t('show')} onClick={() => setShowKeys((current) => ({ ...current, [provider.id]: !current[provider.id] }))}><svg viewBox="0 0 24 24" aria-hidden="true">{showKeys[provider.id] ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button></div></label>
               <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" onClick={() => finishProviderEdit(provider.id)}>{t('aiSaveChanges')}</button><button className="ai-provider-delete-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></div>
             </>}
           </div>;
@@ -454,14 +499,13 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
           <div className="ai-task-list">{aiTaskDefinitions.map(([task, label]) => {
             const result = aiTaskTestResults[task];
             return <label className="ai-task-row" key={task}>
-              <span className="ai-task-name"><span>{t(label)}</span>{result && <small className={`ai-task-test-result ${result.status}`}>{result.status === 'success' ? t('aiTestSuccess') : t(AI_TEST_ERROR_KEYS[result.code] || 'aiTestRequestFailed')}</small>}</span>
-              <select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length || isTestingAiTasks} onChange={(event) => { setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } })); setAiTaskTestResults((current) => ({ ...current, [task]: undefined })); }}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.customName || model.name}</option>)}</select>
+              <span className="ai-task-name"><span>{t(label)}</span>{result && <small className={`ai-task-test-result ${result.status}`} aria-label={result.status === 'success' ? t('aiTestSuccess') : undefined} title={result.status === 'success' ? t('aiTestSuccess') : undefined}>{result.status === 'success' ? <svg className="ai-task-success-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8 12 2.6 2.6L16.5 9" /></svg> : `${t(AI_TEST_ERROR_KEYS[result.code] || 'aiTestRequestFailed')}${result.detail ? ` (${result.detail})` : ''}`}</small>}</span>
+              <select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length || isTestingAiTasks} onChange={(event) => { setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } })); setAiTaskTestResults((current) => ({ ...current, [task]: undefined })); setTaskAssignmentsSaved(false); }}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.customName || model.name}</option>)}</select>
             </label>;
           })}</div>
-          {isTestingAiTasks && <div className="ai-task-test-overlay" role="status" aria-live="polite"><span className="ai-test-spinner" aria-hidden="true" /><strong>{t('aiTestRunning')}</strong><small>{aiTaskTestProgress ? `${t(aiTaskTestProgress.task === 'receipt' ? 'aiTaskReceipts' : 'aiTaskConversation')} · ${t('aiTestAttempt')} ${aiTaskTestProgress.attempt}/3` : t('aiTestPreparing')}</small></div>}
+          {isTestingAiTasks && <div className="ai-task-test-overlay" role="status" aria-live="polite"><span className="ai-test-spinner" aria-hidden="true" /><strong>{t('aiTestRunning')}</strong><small>{aiTaskTestProgress ? `${t(aiTaskTestProgress.task === 'receipt' ? 'aiTaskReceipts' : 'aiTaskConversation')} · ${aiTaskTestProgress.taskIndex}/${aiTaskTestProgress.totalTasks} · ${t('aiTestAttempt')} ${aiTaskTestProgress.attempt}/3` : t('aiTestPreparing')}</small></div>}
         </div>
-        <p className="ai-task-test-hint">{t('aiTaskTestHint')}</p>
-        <div className="ai-provider-edit-actions"><button className="secondary-button ai-test-button" type="button" disabled={isTestingAiTasks || !assignedAiTaskCount} onClick={testAssignedAiTasks}>{isTestingAiTasks ? t('aiTestRunning') : t('aiTestAssignedTasks')}</button><button className="ai-provider-save-button" type="button" disabled={isTestingAiTasks} onClick={() => saveAiSettingsNow()}>{t('aiSaveChanges')}</button></div>
+        <div className="ai-provider-edit-actions"><button className="secondary-button ai-test-button" type="button" disabled={isTestingAiTasks || !assignedAiTaskCount} onClick={testAssignedAiTasks}>{isTestingAiTasks ? t('aiTestRunning') : t('aiTestAssignedTasks')}</button><button className={`ai-provider-save-button ${taskAssignmentsSaved ? 'is-saved' : ''}`} type="button" disabled={isTestingAiTasks || !allAssignedTasksPassed || taskAssignmentsSaved} onClick={saveTaskAssignments}>{taskAssignmentsSaved && <svg className="ai-save-success-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8 12 2.6 2.6L16.5 9" /></svg>}{taskAssignmentsSaved ? t('saved') : t('aiSaveChanges')}</button></div>
       </article>
     </section>
     <article className="panel migration-option-card">

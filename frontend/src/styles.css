@@ -2882,6 +2882,37 @@ h2 {
     color: #f8fbf8;
 }
 
+.ai-provider-save-button.is-saved {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--positive);
+    animation: ai-save-success-pop .32s ease-out;
+}
+
+.ai-save-success-icon {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    animation: ai-save-check-draw .36s ease-out both;
+}
+
+@keyframes ai-save-success-pop {
+    0% { transform: scale(.92); }
+    70% { transform: scale(1.04); }
+    100% { transform: scale(1); }
+}
+
+@keyframes ai-save-check-draw {
+    from { opacity: 0; transform: scale(.72); }
+    to { opacity: 1; transform: scale(1); }
+}
+
 .ai-provider-save-button:hover {
     background: #294735;
     box-shadow: 0 5px 12px #243b2b20;
@@ -3011,15 +3042,19 @@ h2 {
     color: var(--positive);
 }
 
-.ai-task-test-result.error {
-    color: #b95349;
+.ai-task-success-icon {
+    display: block;
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
-.ai-task-test-hint {
-    margin: 12px 0 0;
-    color: var(--muted);
-    font-size: 10px;
-    line-height: 1.5;
+.ai-task-test-result.error {
+    color: #b95349;
 }
 
 .ai-task-test-overlay {

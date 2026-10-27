@@ -44,6 +44,7 @@ export async function apiRequest(path, options = {}) {
       error.code = code;
       error.status = response.status;
       error.fields = payload?.error?.fields;
+      error.requestId = payload?.meta?.requestId;
       throw error;
     }
     return payload;
