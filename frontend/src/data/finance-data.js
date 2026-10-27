@@ -26,11 +26,11 @@ export function saveAnonymousProfile(profile) {
   localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
 }
 
-export function emptyWorkspace() {
+export function emptyFinanceData() {
   return { accounts: [], categories: [], transactions: [], budgets: [] };
 }
 
-export function makeStarterWorkspace() {
+export function makeStarterData() {
   const id = () => crypto.randomUUID();
   return {
     accounts: [],
@@ -46,8 +46,8 @@ export function makeStarterWorkspace() {
   };
 }
 
-export function ensureStarterCategories(workspace) {
-  const categories = [...(workspace.categories ?? [])];
+export function ensureFinanceDefaults(data) {
+  const categories = [...(data.categories ?? [])];
   const defaults = [
     { name: 'None', type: 'expense' },
     { name: 'Other', type: 'expense' },
@@ -60,41 +60,41 @@ export function ensureStarterCategories(workspace) {
     if (!exists) categories.push({ id: crypto.randomUUID(), ...category, archived: false });
   }
   return {
-    ...emptyWorkspace(),
-    ...workspace,
-    accounts: workspace.accounts ?? [],
+    ...emptyFinanceData(),
+    ...data,
+    accounts: data.accounts ?? [],
     categories
   };
 }
 
-export function loadAnonymousWorkspace() {
+export function loadAnonymousData() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return ensureStarterCategories({ ...emptyWorkspace(), ...JSON.parse(stored) });
+    if (stored) return ensureFinanceDefaults({ ...emptyFinanceData(), ...JSON.parse(stored) });
   } catch {
     localStorage.removeItem(STORAGE_KEY);
   }
-  const initial = makeStarterWorkspace();
-  saveAnonymousWorkspace(initial);
+  const initial = makeStarterData();
+  saveAnonymousData(initial);
   return initial;
 }
 
-export function saveAnonymousWorkspace(workspace) {
+export function saveAnonymousData(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    ...workspace,
-    budgets: (workspace.budgets ?? []).map((budget) => Object.fromEntries(Object.entries(budget).filter(([key]) => key !== 'accountId')))
+    ...data,
+    budgets: (data.budgets ?? []).map((budget) => Object.fromEntries(Object.entries(budget).filter(([key]) => key !== 'accountId')))
   }));
 }
 
-export function clearAnonymousWorkspace() {
+export function clearAnonymousData() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-export function hasWorkspaceData(workspace) {
-  return Boolean(workspace?.transactions?.length || workspace?.budgets?.length);
+export function hasFinanceData(data) {
+  return Boolean(data?.transactions?.length || data?.budgets?.length);
 }
 
-export function mergeWorkspaces(serverData, localData) {
+export function mergeFinanceData(serverData, localData) {
   const mergeById = (remote = [], local = []) => {
     const result = new Map(remote.map((item) => [item.id, item]));
     for (const item of local) if (!result.has(item.id)) result.set(item.id, item);
@@ -110,37 +110,19 @@ export function mergeWorkspaces(serverData, localData) {
 
 export async function loadServerData() {
   const response = await apiRequest('/auth/data');
-  return ensureStarterCategories(response.data);
+  return ensureFinanceDefaults(response.data);
 }
 
-export async function saveServerData(workspace) {
+export async function saveServerData(data) {
   const response = await apiRequest('/auth/data', {
     method: 'PUT',
     body: JSON.stringify({
-      accounts: workspace.accounts ?? [],
-      categories: workspace.categories,
-      transactions: workspace.transactions,
-      budgets: (workspace.budgets ?? []).map((budget) => Object.fromEntries(Object.entries(budget).filter(([key]) => key !== 'accountId')))
+      accounts: data.accounts ?? [],
+      categories: data.categories,
+      transactions: data.transactions,
+      budgets: (data.budgets ?? []).map((budget) => Object.fromEntries(Object.entries(budget).filter(([key]) => key !== 'accountId')))
     })
   });
   return response.data;
 }
 
-export function moneyToCents(value) {
-  const match = String(value).match(/^(\d+)(?:\.(\d{1,2}))?$/);
-  if (!match) return null;
-  return BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'));
-}
-
-export function currencySymbol(currency) {
-  return ({ USD: '$', EUR: '\u20ac', CNY: '\uffe5', GBP: '\u00a3' })[currency] ?? currency;
-}
-
-export function formatCents(cents, locale, currency) {
-  const negative = cents < 0n;
-  const absolute = negative ? -cents : cents;
-  const whole = absolute / 100n;
-  const fraction = String(absolute % 100n).padStart(2, '0');
-  const formatter = new Intl.NumberFormat(locale, { useGrouping: true, minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  return `${negative ? '-' : ''}${currencySymbol(currency)}${formatter.format(whole)}.${fraction}`;
-}

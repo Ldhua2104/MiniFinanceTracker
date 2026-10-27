@@ -347,11 +347,11 @@ authRouter.post('/logout', requireCsrf, async (req, res, next) => {
 authRouter.get('/data', requireUser, async (req, res, next) => {
   try {
     const [accounts, expenseCategories, incomeSources, transactions, budgets] = await Promise.all([
-      Account.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean(),
-      Category.find({ userId: req.user._id, type: 'expense' }).sort({ sortOrder: 1, _id: 1 }).select('-_id -archivedAt').lean(),
-      IncomeSource.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -archivedAt').lean(),
-      Transaction.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean(),
-      Budget.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean()
+      Account.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -userId -createdAt -updatedAt -sortOrder').lean(),
+      Category.find({ userId: req.user._id, type: 'expense' }).sort({ sortOrder: 1, _id: 1 }).select('-_id -userId -createdAt -updatedAt -archivedAt').lean(),
+      IncomeSource.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -userId -createdAt -updatedAt -archivedAt').lean(),
+      Transaction.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -userId -createdAt -updatedAt -sortOrder').lean(),
+      Budget.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -userId -createdAt -updatedAt -sortOrder').lean()
     ]);
     const categories = [
       ...expenseCategories,

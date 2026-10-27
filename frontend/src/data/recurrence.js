@@ -30,10 +30,10 @@ export function makeMonthlyRecurrence(schedule, dayOfMonth, time, fromDate) {
     };
 }
 
-export function materializeDueRecurringTransactions(workspace, throughDate) {
+export function materializeDueRecurringTransactions(data, throughDate) {
     let changed = false;
     const additions = [];
-    const transactions = workspace.transactions.map((transaction) => {
+    const transactions = data.transactions.map((transaction) => {
         const recurring = transaction.recurring;
         if (!recurring?.enabled || !SCHEDULES.has(recurring.schedule)) return transaction;
 
@@ -45,7 +45,7 @@ export function materializeDueRecurringTransactions(workspace, throughDate) {
 
         while (nextRunDate && nextRunDate <= throughDate) {
             const recurrenceMonth = nextRunDate.slice(0, 7);
-            const exists = workspace.transactions.some((item) => item.recurrenceSourceId === transaction.id && item.recurrenceMonth === recurrenceMonth)
+            const exists = data.transactions.some((item) => item.recurrenceSourceId === transaction.id && item.recurrenceMonth === recurrenceMonth)
                 || additions.some((item) => item.recurrenceSourceId === transaction.id && item.recurrenceMonth === recurrenceMonth);
             if (!exists) {
                 const { noteImage, recurring: sourceRule, recurrenceSourceId, recurrenceMonth: sourceMonth, ...source } = transaction;
@@ -66,5 +66,5 @@ export function materializeDueRecurringTransactions(workspace, throughDate) {
         return nextRunDate === recurring.nextRunDate ? transaction : { ...transaction, recurring: { ...recurring, nextRunDate } };
     });
 
-    return changed ? { ...workspace, transactions: [...transactions, ...additions] } : workspace;
+    return changed ? { ...data, transactions: [...transactions, ...additions] } : data;
 }

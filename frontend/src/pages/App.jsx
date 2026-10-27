@@ -1,71 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../api/client.js';
-import { convertCents, fetchLatestFxRates } from '../api/exchange-rates.js';
-import {
-  clearAnonymousWorkspace, currencySymbol, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
-  loadServerData, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerData
-} from '../data/workspace.js';
-import { makeMonthlyRecurrence, materializeDueRecurringTransactions } from '../data/recurrence.js';
-import { emptyAiSettings, loadLocalAiSettings, migrateLocalAiSettings, saveLocalAiSettings } from '../data/ai-settings.js';
+import { fetchLatestFxRates } from '../api/exchange-rates.js';
+import { clearAnonymousData, emptyFinanceData, hasFinanceData, loadAnonymousProfile, loadAnonymousData, loadServerData, mergeFinanceData, saveAnonymousProfile, saveAnonymousData, saveServerData } from '../data/finance-data.js';
+import { materializeDueRecurringTransactions } from '../data/recurrence.js';
+import { migrateLocalAiSettings } from '../data/ai-settings.js';
 import { detectLanguage, saveLanguage, translate } from '../i18n.js';
+import { currencies, today, localTransactionTimestamp, makeTrend } from '../utils/finance.js';
+import { AccountForm } from './AccountsPage.jsx';
+import { BudgetPage, BudgetForm } from './BudgetsPage.jsx';
+import { budgetColors } from '../utils/colors.js';
+import { IncomePage, IncomeSourceForm } from './IncomePage.jsx';
+import { ActivityPage, TransactionForm } from './TransactionsPage.jsx';
+import { OverviewPage } from './OverviewPage.jsx';
+import { SettingsPage } from './SettingsPage.jsx';
+import { ProfileAvatar, ProfilePage } from './ProfilePage.jsx';
 
 const APP_ROLES = Object.freeze({ anonymous: 'anonymous', user: 'user' });
-
-const currencies = ['USD', 'EUR', 'CNY', 'GBP'];
-const today = () => {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
-function localTransactionTimestamp(date = new Date()) {
-  return {
-    transactionDate: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`,
-    transactionTime: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-  };
-}
-
-function formatTransactionTime(value, format, language) {
-  if (!value) return '\u2014';
-  const [hour, minute] = value.split(':').map(Number);
-  if (format !== '12') return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  const date = new Date(2000, 0, 1, hour, minute);
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date);
-}
-
-function recentFiveDays() {
-  const center = new Date(`${today()}T12:00:00`);
-  return Array.from({ length: 5 }, (_, index) => {
-    const date = new Date(center);
-    date.setDate(center.getDate() + index - 4);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  });
-}
-
-function makeTrend(account, transactions, language) {
-  const days = recentFiveDays();
-  const totals = new Map(days.map((day) => [day, { income: 0n, expense: 0n }]));
-  for (const item of transactions) {
-    const daily = totals.get(item.transactionDate);
-    if (!daily || item.accountId !== account?.id) continue;
-    daily[item.type] += moneyToCents(item.amount) ?? 0n;
-  }
-  return days.map((date) => ({
-    date,
-    label: new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit' }).format(new Date(`${date}T12:00:00`)),
-    income: totals.get(date).income,
-    expense: totals.get(date).expense
-  }));
-}
-
-function centsToAmount(cents) {
-  return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
-}
-
-function formatSignedCents(cents, locale, currency, sign) {
-  const isNegative = cents < 0n;
-  const absolute = isNegative ? -cents : cents;
-  return `${sign ?? (isNegative ? '-' : '+')}${formatCents(absolute, locale, currency)}`;
-}
 
 export function App() {
   const [language, setLanguage] = useState(detectLanguage);
@@ -75,8 +25,8 @@ export function App() {
   const [user, setUser] = useState(null);
   const [anonymousProfile, setAnonymousProfile] = useState(loadAnonymousProfile);
   const [role, setRole] = useState(APP_ROLES.anonymous);
-  const [workspace, setWorkspace] = useState(emptyWorkspace());
-  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [financeData, setFinanceData] = useState(emptyFinanceData());
+  const [financeDataReady, setFinanceDataReady] = useState(false);
   const [migration, setMigration] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [editingAccount, setEditingAccount] = useState(null);
@@ -104,15 +54,15 @@ export function App() {
         if (!active) return;
         setUser(account);
         setRole(APP_ROLES.user);
-        setWorkspace(remote);
-        setWorkspaceReady(true);
+        setFinanceData(remote);
+        setFinanceDataReady(true);
       })
       .catch(() => {
         if (!active) return;
         setUser(null);
         setRole(APP_ROLES.anonymous);
-        setWorkspace(loadAnonymousWorkspace());
-        setWorkspaceReady(true);
+        setFinanceData(loadAnonymousData());
+        setFinanceDataReady(true);
       });
     return () => { active = false; };
   }, []);
@@ -153,72 +103,66 @@ export function App() {
   }, [anonymousProfile, role]);
 
   useEffect(() => {
-    if (!workspaceReady) return undefined;
+    if (!financeDataReady) return undefined;
     if (role === 'anonymous') {
-      saveAnonymousWorkspace(workspace);
+      saveAnonymousData(financeData);
       return undefined;
     }
     const timer = setTimeout(() => {
       setSaveStatus('saving');
-      saveServerData(workspace)
+      saveServerData(financeData)
         .then(() => {
           setSaveStatus('saved');
         })
         .catch(() => setSaveStatus('failed'));
     }, 450);
     return () => clearTimeout(timer);
-  }, [workspace, role, workspaceReady]);
+  }, [financeData, role, financeDataReady]);
 
   useEffect(() => {
-    if (!workspaceReady) return undefined;
-    const materialize = () => setWorkspace((current) => materializeDueRecurringTransactions(current, today()));
+    if (!financeDataReady) return undefined;
+    const materialize = () => setFinanceData((current) => materializeDueRecurringTransactions(current, today()));
     materialize();
     const timer = window.setInterval(materialize, 60_000);
     return () => window.clearInterval(timer);
-  }, [workspaceReady]);
+  }, [financeDataReady]);
 
   useEffect(() => {
-    if (!workspace.accounts.length) setSelectedAccountId(null);
-    else if (!workspace.accounts.some((account) => account.id === selectedAccountId)) setSelectedAccountId(workspace.accounts[0].id);
-  }, [workspace.accounts, selectedAccountId]);
+    if (!financeData.accounts.length) setSelectedAccountId(null);
+    else if (!financeData.accounts.some((account) => account.id === selectedAccountId)) setSelectedAccountId(financeData.accounts[0].id);
+  }, [financeData.accounts, selectedAccountId]);
 
-  const selectedAccount = workspace.accounts.find((account) => account.id === selectedAccountId) ?? null;
-  const accountTransactions = selectedAccount ? workspace.transactions.filter((item) => item.accountId === selectedAccount.id) : [];
-  const monthTransactions = accountTransactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
-  const activityTransactions = workspace.transactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
+  const selectedAccount = financeData.accounts.find((account) => account.id === selectedAccountId) ?? null;
+  const accountTransactions = selectedAccount ? financeData.transactions.filter((item) => item.accountId === selectedAccount.id) : [];
+  const activityTransactions = financeData.transactions.filter((item) => item.transactionDate.startsWith(month)).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
   const trend = useMemo(() => makeTrend(selectedAccount, accountTransactions, language), [selectedAccount, accountTransactions, language]);
   const currency = selectedAccount?.currency ?? user?.baseCurrency ?? 'USD';
 
   async function onAuthenticated(account) {
-    const local = role === 'anonymous' ? workspace : emptyWorkspace();
+    const local = role === 'anonymous' ? financeData : emptyFinanceData();
     const remote = await loadServerData();
     try { await migrateLocalAiSettings(apiRequest); } catch { /* Keep encrypted local AI settings when migration is unavailable. */ }
     setUser(account);
     setRole(APP_ROLES.user);
     setPage('profile');
-    if (hasWorkspaceData(local)) {
+    if (hasFinanceData(local)) {
       setMigration({ local, remote });
-      setWorkspaceReady(false);
+      setFinanceDataReady(false);
     } else {
-      setWorkspace(remote);
-      setWorkspaceReady(true);
+      setFinanceData(remote);
+      setFinanceDataReady(true);
     }
   }
 
   async function chooseMigration(choice) {
     if (!migration) return;
     const result = choice === 'merge'
-      ? await saveServerData({
-          accounts: mergeById(migration.remote.accounts, migration.local.accounts),
-          categories: mergeById(migration.remote.categories, migration.local.categories),
-          transactions: mergeById(migration.remote.transactions, migration.local.transactions),
-          budgets: mergeById(migration.remote.budgets, migration.local.budgets)
-        })
+      ? await saveServerData(mergeFinanceData(migration.remote, migration.local))
       : migration.remote;
-    if (choice === 'merge') clearAnonymousWorkspace();
-    setWorkspace(result);
+    if (choice === 'merge') clearAnonymousData();
+    setFinanceData(result);
     setMigration(null);
-    setWorkspaceReady(true);
+    setFinanceDataReady(true);
   }
 
   async function signOut() {
@@ -226,39 +170,39 @@ export function App() {
     setUser(null);
     setRole(APP_ROLES.anonymous);
     setMigration(null);
-    setWorkspace(loadAnonymousWorkspace());
-    setWorkspaceReady(true);
+    setFinanceData(loadAnonymousData());
+    setFinanceDataReady(true);
     setSaveStatus('saved');
     setPage('overview');
   }
 
   function addTransaction(transaction) {
-    setWorkspace((current) => ({ ...current, transactions: [transaction, ...current.transactions] }));
+    setFinanceData((current) => ({ ...current, transactions: [transaction, ...current.transactions] }));
   }
 
   function updateTransaction(transaction) {
-    setWorkspace((current) => ({ ...current, transactions: current.transactions.map((item) => item.id === transaction.id ? transaction : item) }));
+    setFinanceData((current) => ({ ...current, transactions: current.transactions.map((item) => item.id === transaction.id ? transaction : item) }));
   }
 
   function deleteTransaction(id) {
-    setWorkspace((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }));
+    setFinanceData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }));
   }
 
   function addAccount(account) {
-    setWorkspace((current) => ({ ...current, accounts: [...current.accounts, account] }));
+    setFinanceData((current) => ({ ...current, accounts: [...current.accounts, account] }));
     setSelectedAccountId(account.id);
     setEditingAccount(null);
     setRightEditor(null);
   }
 
   function updateAccount(account) {
-    setWorkspace((current) => ({ ...current, accounts: current.accounts.map((item) => item.id === account.id ? account : item) }));
+    setFinanceData((current) => ({ ...current, accounts: current.accounts.map((item) => item.id === account.id ? account : item) }));
     setRightEditor(null);
     setEditingAccount(null);
   }
 
   function deleteAccount(id) {
-    setWorkspace((current) => ({
+    setFinanceData((current) => ({
       ...current,
       accounts: current.accounts.filter((item) => item.id !== id),
       transactions: current.transactions.filter((item) => item.accountId !== id)
@@ -273,7 +217,7 @@ export function App() {
   }
 
   function addTransactionAccount(account) {
-    setWorkspace((current) => ({ ...current, accounts: [...current.accounts, account] }));
+    setFinanceData((current) => ({ ...current, accounts: [...current.accounts, account] }));
   }
 
   function openBudgetEditor(budget = null) {
@@ -282,7 +226,7 @@ export function App() {
   }
 
   function saveBudget(budget, { closeEditor = true } = {}) {
-    setWorkspace((current) => {
+    setFinanceData((current) => {
       const category = current.categories.find((item) => item.id === budget.categoryId)
         ?? current.categories.find((item) => item.type === 'expense' && item.name.trim().toLocaleLowerCase() === budget.name.trim().toLocaleLowerCase());
       const linkedCategory = { ...(category ?? {}), id: budget.categoryId || category?.id || crypto.randomUUID(), name: budget.name, type: 'expense', archived: false };
@@ -317,7 +261,7 @@ export function App() {
   }
 
   function saveIncomeSource(source, { closeEditor = true } = {}) {
-    setWorkspace((current) => {
+    setFinanceData((current) => {
       const saved = { ...source, color: source.color || budgetColors[0], type: 'income', archived: false };
       const exists = current.categories.some((item) => item.id === saved.id);
       return { ...current, categories: exists
@@ -331,13 +275,13 @@ export function App() {
   }
 
   function deleteIncomeSource(id) {
-    const source = workspace.categories.find((item) => item.id === id && item.type === 'income');
+    const source = financeData.categories.find((item) => item.id === id && item.type === 'income');
     if (!source) return false;
-    const hasTransactions = workspace.transactions.some((item) => item.type === 'income' && item.categoryId === id);
-    const fallback = workspace.categories.find((item) => item.type === 'income' && item.id !== id && item.name.trim().toLocaleLowerCase() === 'other')
-      ?? workspace.categories.find((item) => item.type === 'income' && item.id !== id);
+    const hasTransactions = financeData.transactions.some((item) => item.type === 'income' && item.categoryId === id);
+    const fallback = financeData.categories.find((item) => item.type === 'income' && item.id !== id && item.name.trim().toLocaleLowerCase() === 'other')
+      ?? financeData.categories.find((item) => item.type === 'income' && item.id !== id);
     if (hasTransactions && !fallback) return false;
-    setWorkspace((current) => ({
+    setFinanceData((current) => ({
       ...current,
       categories: current.categories.filter((item) => item.id !== id),
       transactions: fallback
@@ -350,7 +294,7 @@ export function App() {
   }
 
   function deleteBudget(id) {
-    setWorkspace((current) => ({ ...current, budgets: current.budgets.filter((item) => item.id !== id) }));
+    setFinanceData((current) => ({ ...current, budgets: current.budgets.filter((item) => item.id !== id) }));
     setEditingBudget(null);
     setRightEditor(null);
   }
@@ -431,46 +375,23 @@ export function App() {
           ) : page === 'settings' ? (
             <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} user={user} />
           ) : page === 'budgets' ? (
-            <BudgetPage budgets={workspace.budgets} transactions={workspace.transactions} categories={workspace.categories} accounts={workspace.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
+            <BudgetPage budgets={financeData.budgets} transactions={financeData.transactions} categories={financeData.categories} accounts={financeData.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
           ) : page === 'income' ? (
-            <IncomePage categories={workspace.categories} transactions={workspace.transactions} accounts={workspace.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} onRefreshFx={refreshFxRates} onAddSource={() => openIncomeSourceEditor()} onEditSource={openIncomeSourceEditor} />
+            <IncomePage categories={financeData.categories} transactions={financeData.transactions} accounts={financeData.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} onRefreshFx={refreshFxRates} onAddSource={() => openIncomeSourceEditor()} onEditSource={openIncomeSourceEditor} />
           ) : page === 'activity' ? (
-            <ActivityPage items={activityTransactions} allTransactions={workspace.transactions} categories={workspace.categories} budgets={workspace.budgets} accounts={workspace.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
-          ) : (
-            <>
-              <section className="page-heading">
-                <div><div className="eyebrow">{t('brand')}</div><h1>{t('title')}</h1><p>{t('subtitle')}</p></div>
-                <label className="month-control"><span>{t('month')}</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
-              </section>
-
-              <section className="account-section" aria-label={t('accounts')}>
-                <div className="section-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t('accountOverview')}</h2></div>
-                  {workspace.accounts.length > 0 && <button className="add-account-link" onClick={() => openAccountEditor()}><span>+</span>{t('addAccount')}</button>}
-                </div>
-                {workspace.accounts.length ? (
-                  <div className="summary-grid account-scroller">
-                    {workspace.accounts.map((account) => <AccountCard key={account.id} account={account} selected={account.id === selectedAccountId} transactions={workspace.transactions} locale={language === 'zh' ? 'zh-CN' : 'en-US'} onSelect={() => { setSelectedAccountId(account.id); openAccountEditor(account); }} />)}
-                  </div>
-                ) : (
-                  <div className="account-empty"><p>{t('noAccounts')}</p><button className="primary-button first-account-button" onClick={() => openAccountEditor()}><span className="large-plus">+</span>{t('createFirstAccount')}</button></div>
-                )}
-              </section>
-
-              {selectedAccount && <TrendChart account={selectedAccount} points={trend} t={t} locale={language === 'zh' ? 'zh-CN' : 'en-US'} />}
-              <TransactionPanel items={monthTransactions} categories={workspace.categories} accounts={workspace.accounts} t={t} language={language} timeFormat={timeFormat} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} account={selectedAccount} />
-            </>
-          )}
+            <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
+          ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
         <aside className={`right-rail ${rightEditor ? 'editing' : ''}`}>
           {rightEditor === 'account' ? (
             <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
           ) : rightEditor === 'budget' ? (
-            <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} defaultCurrency={workspace.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
+            <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || financeData.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={financeData.categories} budgets={financeData.budgets} defaultCurrency={financeData.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
           ) : rightEditor === 'income-source' ? (
-            <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={workspace.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
+            <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={financeData.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
-            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={workspace.accounts} categories={workspace.categories} budgets={workspace.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
+            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={financeData.accounts} categories={financeData.categories} budgets={financeData.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
           ) : (
             <>
               <div className="right-card account-card">
@@ -492,1532 +413,5 @@ export function App() {
 
       <footer className="app-footer"><span>{t('footer')}</span><span>© MINT FINANCE</span></footer>
     </div>
-  );
-}
-
-function mergeById(remote = [], local = []) {
-  const merged = new Map(remote.map((item) => [item.id, item]));
-  for (const item of local) if (!merged.has(item.id)) merged.set(item.id, item);
-  return [...merged.values()];
-}
-
-function AccountCard({ account, selected, transactions, locale, onSelect }) {
-  const balance = transactions.filter((item) => item.accountId === account.id).reduce((sum, item) => {
-    const cents = moneyToCents(item.amount) ?? 0n;
-    return sum + (item.type === 'income' ? cents : -cents);
-  }, moneyToCents(account.openingBalance) ?? 0n);
-  return (
-    <button className={`account-card-option ${selected ? 'selected' : ''}`} onClick={onSelect}>
-      <span className="account-card-top"><span className="account-glyph">{account.name.slice(0, 1).toUpperCase()}</span><span className="account-currency">{account.currency}</span></span>
-      <span className="account-name">{account.name}</span>
-      <strong>{formatSignedCents(balance, locale, account.currency)}</strong>
-    </button>
-  );
-}
-
-function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = null, embedded = false }) {
-  const editing = Boolean(initialAccount);
-  const [currency, setCurrency] = useState(initialAccount?.currency ?? 'USD');
-  const [error, setError] = useState('');
-  function submit(event) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get('name')).trim();
-    const note = String(form.get('note') ?? '').trim();
-    const openingBalance = editing ? initialAccount.openingBalance : String(form.get('openingBalance')).trim() || '0.00';
-    if (!name || (!editing && moneyToCents(openingBalance) === null)) return setError(t('fieldRequired'));
-    setError('');
-    onSubmit({ id: initialAccount?.id ?? crypto.randomUUID(), name, note, currency, openingBalance: editing ? openingBalance : centsToAmount(moneyToCents(openingBalance)) });
-  }
-  const fields = <>
-    <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" defaultValue={initialAccount?.name ?? ''} autoFocus={!embedded} required /></label>
-    {!editing && <label className="field"><span>{t('openingBalance')}</span><div className="transaction-amount-input"><span>{currencySymbol(currency)}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></div></label>}
-    <label className="field"><span>{t('currency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label>
-    <label className="field"><span>{t('accountNote')}</span><textarea name="note" rows="3" maxLength="500" defaultValue={initialAccount?.note ?? ''} /></label>
-    {error && <div className="inline-error">{error}</div>}
-  </>;
-
-  if (embedded) return <section className="inline-account-editor">
-    <div className="inline-budget-heading"><strong>{t('addAccount')}</strong><button type="button" className="text-button" onClick={onCancel} aria-label={t('close')}>×</button></div>
-    <form onSubmit={submit}>{fields}<button className="primary-button" type="submit">{t('saveAccount')} <span>+</span></button></form>
-  </section>;
-
-  return (
-    <section className="panel side-editor">
-      <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t(editing ? 'editAccount' : 'addAccount')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
-      <p className="editor-copy">{t('accountSetupHint')}</p>
-      <form onSubmit={submit}>
-        {fields}
-        <div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveAccount')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteAccount'))) onDelete(initialAccount.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l-1-13M10 11v5m4-5v5" /></svg><span>{t('deleteAccount')}</span></button>}</div>
-        <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
-      </form>
-    </section>
-  );
-}
-
-const budgetColors = ['#557b63', '#7893a4', '#b88762', '#8879a6', '#b77979', '#a39152'];
-
-function BudgetPage({ budgets, transactions, categories, accounts, month, locale, t, fx, onAdd, onEdit }) {
-  const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
-  const visibleBudgets = budgets.filter((budget) => !budget.month || budget.month === month);
-  const monthEnd = new Date(`${month}-01T12:00:00`);
-  monthEnd.setMonth(monthEnd.getMonth() + 1, 0);
-  const monthEndLabel = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(monthEnd);
-
-  function relatedExpenses(budget) {
-    return transactions.filter((transaction) => {
-      if (transaction.type !== 'expense' || !transaction.transactionDate.startsWith(month)) return false;
-      return budget.categoryId
-        ? transaction.categoryId === budget.categoryId
-        : categoryMap.get(transaction.categoryId)?.trim().toLocaleLowerCase() === budget.name?.trim().toLocaleLowerCase();
-    });
-  }
-
-  function convertExpense(transaction, budget) {
-    return convertCents(moneyToCents(transaction.amount) ?? 0n, transaction.currency, budget.currency, fx.rates);
-  }
-
-  function spentFor(budget) {
-    let total = 0n;
-    for (const transaction of relatedExpenses(budget)) {
-      const converted = convertExpense(transaction, budget);
-      if (converted === null) return null;
-      total += converted;
-    }
-    return total;
-  }
-
-  function remainingHistoryFor(budget) {
-    const dayCount = month === today().slice(0, 7) ? Number(today().slice(-2)) : monthEnd.getDate();
-    const dailySpend = new Map();
-    for (const transaction of relatedExpenses(budget)) {
-      const amount = convertExpense(transaction, budget);
-      if (amount === null) return null;
-      dailySpend.set(transaction.transactionDate, (dailySpend.get(transaction.transactionDate) ?? 0n) + amount);
-    }
-    let spent = 0n;
-    return Array.from({ length: dayCount }, (_, index) => {
-      const day = index + 1;
-      const date = `${month}-${String(day).padStart(2, '0')}`;
-      spent += dailySpend.get(date) ?? 0n;
-      return { date, day, remaining: (moneyToCents(budget.amount) ?? 0n) - spent };
-    });
-  }
-
-  function accountSpendingFor(budget) {
-    const totals = new Map();
-    for (const transaction of relatedExpenses(budget)) {
-      const amount = convertExpense(transaction, budget);
-      if (amount === null) return null;
-      const key = transaction.accountId || '__unassigned__';
-      totals.set(key, (totals.get(key) ?? 0n) + amount);
-    }
-    return [...totals.entries()].map(([accountId, amount]) => ({
-      accountId,
-      amount,
-      name: accounts.find((account) => account.id === accountId)?.name || t('unassignedAccount')
-    })).sort((a, b) => a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0);
-  }
-
-  return (
-    <section className="page-section budget-page">
-      <PageTitle title={t('budgets')} detail={t('budgetIntro')} />
-      <section className="panel budget-panel">
-        <div className="panel-heading">
-          <div><div className="eyebrow">{t('budgets')}</div><h2>{t('monthlyBudgets')}</h2></div>
-          <div className="panel-actions"><span className="count-pill">{visibleBudgets.length} {t('budgetsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('addBudget')} title={t('addBudget')}>+</button></div>
-        </div>
-        {visibleBudgets.length > 0 && fx.status === 'loading' && <p className="budget-rates-status">{t('ratesLoading')}</p>}
-        {visibleBudgets.length > 0 && fx.status === 'error' && <p className="budget-rates-status">{t('ratesUnavailable')}</p>}
-        {visibleBudgets.length > 0 && fx.stale && <p className="budget-rates-status">{t('ratesCached')} · {t('ratesThrough')} {fx.date}</p>}
-        {visibleBudgets.length ? (
-          <div className="budget-list">
-            {visibleBudgets.map((budget) => <BudgetCard key={budget.id} budget={budget} spent={spentFor(budget)} remainingHistory={remainingHistoryFor(budget)} accountSpending={accountSpendingFor(budget)} recentExpenses={relatedExpenses(budget).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? '')).slice(0, 5)} accounts={accounts} locale={locale} monthEndLabel={monthEndLabel} categoryMap={categoryMap} t={t} onEdit={() => onEdit(budget)} />)}
-          </div>
-        ) : (
-          <div className="empty-state budget-empty"><span className="empty-icon">＋</span><p>{t('noBudgets')}</p><button className="primary-button" onClick={onAdd}>{t('addBudget')}</button></div>
-        )}
-      </section>
-    </section>
-  );
-}
-
-function BudgetCard({ budget, spent, remainingHistory, accountSpending, recentExpenses, accounts, locale, monthEndLabel, categoryMap, t, onEdit }) {
-  const [expanded, setExpanded] = useState(false);
-  const limit = moneyToCents(budget.amount) ?? 0n;
-  const remaining = spent === null ? null : limit - spent;
-  const progress = spent !== null && limit > 0n ? Math.min(100, Number((spent * 10000n) / limit) / 100) : 0;
-  const name = budget.name || categoryMap.get(budget.categoryId) || t('budgets');
-  const accountTotal = accountSpending?.reduce((sum, item) => sum + item.amount, 0n) ?? 0n;
-  const accountColors = ['#6f9278', '#7b91aa', '#b48a68', '#927fa8', '#bd7775', '#a69553'];
-  const accountNames = new Map(accounts.map((account) => [account.id, account.name]));
-  return (
-    <article className={`budget-card ${expanded ? 'expanded' : ''}`} style={{ '--budget-accent': budget.color || budgetColors[0] }}>
-      <div className="budget-card-topline">
-        <button className="budget-card-heading" type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-          <strong>{name}</strong><span className="budget-currency">{budget.currency}</span><svg className="budget-expand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
-        <button className="budget-card-edit" type="button" onClick={onEdit} aria-label={t('editBudget')} title={t('editBudget')}>✎</button>
-      </div>
-      <button className="budget-card-summary" type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-        <span className="budget-amounts">
-          <span><small>{t('remainingBudget')}</small><strong>{remaining === null ? '—' : formatCents(remaining, locale, budget.currency)}</strong></span>
-          <span><small>{t('totalBudget')}</small><strong>{formatCents(limit, locale, budget.currency)}</strong></span>
-        </span>
-        <span className={`budget-progress ${spent === null ? 'unavailable' : ''}`} role="progressbar" aria-label={`${name} ${t('budgetProgress')}`} aria-valuenow={Math.round(progress)} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${progress}%` }} /></span>
-        <span className="budget-card-footer"><span>{t('spentBudget')}: {spent === null ? '—' : formatCents(spent, locale, budget.currency)}</span><span>{t('monthEnds')} {monthEndLabel}</span></span>
-      </button>
-      {expanded && <section className="budget-detail" aria-label={`${name} ${t('budgetDetails')}`}>
-        <div className="budget-detail-section">
-          <h3>{t('remainingBudgetTrend')}</h3>
-          {remainingHistory ? <BudgetRemainingChart points={remainingHistory} currency={budget.currency} locale={locale} label={t('remainingBudgetTrend')} /> : <p className="budget-detail-empty">{t('ratesUnavailable')}</p>}
-        </div>
-        <div className="budget-detail-section">
-          <h3>{t('accountSpendingShare')}</h3>
-          {accountSpending === null ? <p className="budget-detail-empty">{t('ratesUnavailable')}</p> : accountSpending.length === 0 || accountTotal === 0n ? <p className="budget-detail-empty">{t('noBudgetSpending')}</p> : <>
-            <div className="budget-account-bar" role="img" aria-label={t('accountSpendingShare')}>
-              {accountSpending.map((item, index) => <span key={item.accountId} style={{ width: `${Number((item.amount * 10000n) / accountTotal) / 100}%`, background: accountColors[index % accountColors.length] }} title={`${item.name}: ${formatCents(item.amount, locale, budget.currency)}`} />)}
-            </div>
-            <div className="budget-account-legend">{accountSpending.map((item, index) => <span key={item.accountId}><i style={{ background: accountColors[index % accountColors.length] }} /><strong>{item.name}</strong><small>{formatCents(item.amount, locale, budget.currency)} · {Number((item.amount * 10000n) / accountTotal) / 100}%</small></span>)}</div>
-          </>}
-        </div>
-        <div className="budget-detail-section">
-          <h3>{t('recentBudgetTransactions')}</h3>
-          {recentExpenses.length ? <div className="budget-recent-list">{recentExpenses.map((item) => <div className="budget-recent-row" key={item.id}><span><strong>{item.title || item.note || categoryMap.get(item.categoryId) || '—'}</strong><small>{new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(`${item.transactionDate}T12:00:00`))} · {accountNames.get(item.accountId) || t('unassignedAccount')}</small></span><b>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, '-')}</b></div>)}</div> : <p className="budget-detail-empty">{t('noBudgetSpending')}</p>}
-        </div>
-      </section>}
-    </article>
-  );
-}
-
-function BudgetRemainingChart({ points, currency, locale, label }) {
-  const width = 720;
-  const height = 190;
-  const left = 86;
-  const right = 16;
-  const top = 14;
-  const bottom = 28;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const values = points.map((point) => Number(point.remaining));
-  let min = Math.min(...values);
-  let max = Math.max(...values);
-  if (min === max) {
-    const padding = Math.max(Math.abs(max) * 0.08, 100);
-    min -= padding;
-    max += padding;
-  } else {
-    const padding = (max - min) * 0.08;
-    min -= padding;
-    max += padding;
-  }
-  const x = (index) => left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * plotWidth);
-  const y = (value) => top + ((max - value) / (max - min)) * plotHeight;
-  const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index)} ${y(Number(point.remaining))}`).join(' ');
-  const ticks = [max, (min + max) / 2, min];
-  const formatTick = (value) => formatCents(BigInt(Math.round(value)), locale, currency);
-  const middleIndex = Math.floor((points.length - 1) / 2);
-  const labelIndices = [...new Set([0, middleIndex, points.length - 1])];
-  return <div className="chart-scroll budget-remaining-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-    {ticks.map((tick, index) => { const yy = y(tick); return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} className="chart-gridline" /><text x={left - 8} y={yy + 4} textAnchor="end" className="chart-axis-label">{formatTick(tick)}</text></g>; })}
-    <path d={path} className="budget-remaining-line" />
-    {labelIndices.map((index) => <text key={index} x={x(index)} y={height - 9} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'} className="chart-axis-label">{points[index].day}</text>)}
-  </svg></div>;
-}
-
-function IncomePage({ categories, transactions, accounts, month, locale, t, fx, reportCurrency, onReportCurrencyChange, onRefreshFx, onAddSource, onEditSource }) {
-  const sources = categories.filter((category) => category.type === 'income');
-  const accountColors = ['#6f9278', '#7b91aa', '#b48a68', '#927fa8', '#bd7775', '#a69553'];
-  const accountColor = (accountId) => {
-    const index = accounts.findIndex((account) => account.id === accountId);
-    return accountColors[(index < 0 ? accounts.length : index) % accountColors.length];
-  };
-  const monthIncome = transactions.filter((transaction) => transaction.type === 'income' && transaction.transactionDate.startsWith(month));
-  const sourceData = sources.map((source) => {
-    const records = monthIncome.filter((transaction) => transaction.categoryId === source.id)
-      .sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || (b.transactionTime ?? '').localeCompare(a.transactionTime ?? ''));
-    let total = 0n;
-    let available = true;
-    const accountTotals = new Map();
-    const chartPoints = records.map((transaction) => {
-      const amount = convertCents(moneyToCents(transaction.amount) ?? 0n, transaction.currency, reportCurrency, fx.rates);
-      if (amount === null) {
-        available = false;
-        return { transaction, amount: 0n };
-      }
-      total += amount;
-      const key = transaction.accountId || '__unassigned__';
-      accountTotals.set(key, (accountTotals.get(key) ?? 0n) + amount);
-      return { transaction, amount };
-    });
-    const accountBreakdown = [...accountTotals.entries()].map(([accountId, amount]) => ({
-      accountId,
-      amount,
-      name: accounts.find((account) => account.id === accountId)?.name || t('unassignedAccount'),
-      color: accountColor(accountId)
-    })).sort((a, b) => a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0);
-    return {
-      source,
-      records,
-      total: available ? total : null,
-      accountBreakdown: available ? accountBreakdown : null,
-      chartPoints: available ? [...chartPoints].reverse() : null
-    };
-  });
-  const ratesMessage = fx.status === 'loading' ? t('ratesLoading')
-    : fx.status === 'error' ? t('ratesUnavailable')
-      : fx.stale ? t('ratesCached')
-        : fx.date ? `${t('ratesThrough')} ${fx.date}` : '';
-  return <section className="page-section income-page">
-    <PageTitle title={t('income')} detail={monthIncome.length ? t('incomePageIntro') : ''} />
-    {!monthIncome.length ? <div className="income-empty-line"><span>{t('noIncomeForSource')}</span><button className="add-transaction-button" type="button" onClick={onAddSource} aria-label={t('addIncomeSource')} title={t('addIncomeSource')}>+</button></div> : <section className="panel income-panel">
-      <div className="panel-heading">
-        <div><div className="eyebrow">{t('income')}</div><h2>{t('incomeSources')}</h2></div>
-        <div className="panel-actions"><span className="count-pill">{sources.length} {t('incomeSourcesCount')}</span><button className="add-transaction-button" type="button" onClick={onAddSource} aria-label={t('addIncomeSource')} title={t('addIncomeSource')}>+</button></div>
-      </div>
-      <div className="income-controls">
-        <label><span>{t('summaryCurrency')}</span><select value={reportCurrency} onChange={(event) => onReportCurrencyChange(event.target.value)}>{currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select></label>
-        <div><span className="income-rates-status">{ratesMessage}</span><button type="button" className="income-refresh-button" onClick={onRefreshFx} disabled={fx.status === 'loading'} aria-label={t('refreshRates')} title={t('refreshRates')}>↻</button></div>
-      </div>
-      {sources.length ? <div className="income-source-list">{sourceData.map((data) => <IncomeSourceCard key={data.source.id} data={data} accounts={accounts} reportCurrency={reportCurrency} locale={locale} t={t} onEdit={() => onEditSource(data.source)} />)}</div>
-        : <div className="empty-state income-empty"><p>{t('noIncomeSources')}</p></div>}
-    </section>}
-  </section>;
-}
-
-function IncomeSourceForm({ initialSource, categories, t, onCancel, onSubmit, onDelete, embedded = false }) {
-  const [title, setTitle] = useState(initialSource?.name ?? '');
-  const [color, setColor] = useState(initialSource?.color || budgetColors[0]);
-  const [error, setError] = useState('');
-  const editing = Boolean(initialSource);
-
-  function submit(event) {
-    event?.preventDefault();
-    const cleanTitle = title.trim();
-    if (!cleanTitle || cleanTitle.length > 50) return setError(t('fieldRequired'));
-    const duplicate = categories.some((category) => category.type === 'income'
-      && category.id !== initialSource?.id
-      && category.name.trim().toLocaleLowerCase() === cleanTitle.toLocaleLowerCase());
-    if (duplicate) return setError(t('incomeSourceExists'));
-    setError('');
-    onSubmit({ id: initialSource?.id ?? crypto.randomUUID(), name: cleanTitle, color, type: 'income', archived: false });
-    if (embedded) setTitle('');
-  }
-
-  function deleteSource() {
-    if (!initialSource || !window.confirm(t('confirmDeleteIncomeSource'))) return;
-    if (onDelete(initialSource.id) === false) setError(t('incomeSourceDeleteRequiresReplacement'));
-  }
-
-  const fields = <>
-    <label className="field"><span>{t('sourceTitle')}</span><input type="text" maxLength="50" value={title} onChange={(event) => setTitle(event.target.value)} required autoFocus={!embedded} /></label>
-    <div className="field"><span>{t('budgetCardColor')}</span><div className="budget-color-picker" role="group" aria-label={t('budgetCardColor')}>
-      {budgetColors.map((value) => <button key={value} type="button" className={`budget-color-swatch ${color === value ? 'selected' : ''}`} style={{ '--swatch-color': value }} onClick={() => setColor(value)} aria-label={value} aria-pressed={color === value} />)}
-    </div></div>
-  </>;
-  if (embedded) return <div className="inline-budget-editor inline-income-source-editor" onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
-    <div className="inline-budget-heading"><strong>{t('addIncomeSource')}</strong><button type="button" className="text-button" onClick={onCancel}>{t('cancel')}</button></div>
-    {fields}{error && <div className="inline-error">{error}</div>}
-    <button className="primary-button" type="button" onClick={() => submit()}>{t('saveIncomeSource')}</button>
-  </div>;
-
-  return <section className="panel side-editor income-source-editor">
-    <div className="editor-heading"><div><div className="eyebrow">{t('incomeSources')}</div><h2>{editing ? t('editIncomeSource') : t('addIncomeSource')}</h2></div><button className="icon-button close-editor" type="button" onClick={onCancel} aria-label={t('close')}>×</button></div>
-    <p className="editor-copy">{t('incomeSourceHint')}</p>
-    <form onSubmit={submit}>{fields}{error && <div className="inline-error">{error}</div>}<div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveIncomeSource')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={deleteSource}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l-1-13M10 11v5m4-5v5" /></svg><span>{t('delete')}</span></button>}</div></form>
-  </section>;
-}
-
-function IncomeSourceCard({ data, accounts, reportCurrency, locale, t, onEdit }) {
-  const [expanded, setExpanded] = useState(false);
-  const name = incomeSourceLabel(data.source.name, t);
-  const total = data.total;
-  const accountTotal = data.accountBreakdown?.reduce((sum, item) => sum + item.amount, 0n) ?? 0n;
-  const accountNames = new Map(accounts.map((account) => [account.id, account.name]));
-  return <article className={`income-source-card ${expanded ? 'expanded' : ''}`} style={{ '--income-source-accent': data.source.color || '#719a78' }}>
-    <button type="button" className="income-source-edit" onClick={onEdit} aria-label={`${t('editIncomeSource')}: ${name}`} title={t('editIncomeSource')}>✎</button>
-    <button type="button" className="income-source-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-      <span className="income-source-heading"><strong>{name}</strong><span className="budget-currency">{reportCurrency}</span><svg className="budget-expand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span>
-      <span className="income-source-totals"><span><small>{t('incomeThisMonth')}</small><strong>{total === null ? '—' : formatSignedCents(total, locale, reportCurrency, '+')}</strong></span><span className="income-source-count"><small>{t('incomeRecordCount')}</small><strong>{data.records.length}</strong></span></span>
-    </button>
-    {expanded && <section className="income-source-detail" aria-label={`${name} ${t('incomeDetails')}`}>
-      <div className="income-detail-section">
-        <h3>{t('individualIncomeAmounts')}</h3>
-        {data.chartPoints ? data.chartPoints.length ? <IncomeBarChart points={data.chartPoints} accounts={accounts} reportCurrency={reportCurrency} locale={locale} label={t('individualIncomeAmounts')} /> : <p className="budget-detail-empty">{t('noIncomeForSource')}</p> : <p className="budget-detail-empty">{t('ratesUnavailable')}</p>}
-      </div>
-      <div className="income-detail-section">
-        <h3>{t('incomeByAccount')}</h3>
-        {data.accountBreakdown === null ? <p className="budget-detail-empty">{t('ratesUnavailable')}</p> : data.accountBreakdown.length === 0 || accountTotal === 0n ? <p className="budget-detail-empty">{t('noIncomeForSource')}</p> : <>
-          <div className="budget-account-bar" role="img" aria-label={t('incomeByAccount')}>
-            {data.accountBreakdown.map((item) => <span key={item.accountId} style={{ width: `${Number((item.amount * 10000n) / accountTotal) / 100}%`, background: item.color }} title={`${item.name}: ${formatCents(item.amount, locale, reportCurrency)}`} />)}
-          </div>
-          <div className="budget-account-legend">{data.accountBreakdown.map((item) => <span key={item.accountId}><i style={{ background: item.color }} /><strong>{item.name}</strong><small>{formatCents(item.amount, locale, reportCurrency)} · {Number((item.amount * 10000n) / accountTotal) / 100}%</small></span>)}</div>
-        </>}
-      </div>
-      <div className="income-detail-section">
-        <h3>{t('recentIncomeRecords')}</h3>
-        {data.records.length ? <div className="budget-recent-list">{data.records.slice(0, 5).map((item) => <div className="budget-recent-row" key={item.id}><span><strong>{item.title || item.note || name}</strong><small>{new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(`${item.transactionDate}T12:00:00`))} · {accountNames.get(item.accountId) || t('unassignedAccount')}</small></span><b className="income-record-amount">{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, '+')}</b></div>)}</div> : <p className="budget-detail-empty">{t('noIncomeForSource')}</p>}
-      </div>
-    </section>}
-  </article>;
-}
-
-function IncomeBarChart({ points, accounts, reportCurrency, locale, label }) {
-  const width = Math.max(640, points.length * 38 + 105);
-  const height = 220;
-  const left = 90;
-  const right = 16;
-  const top = 16;
-  const bottom = 35;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const values = points.map((point) => Number(point.amount));
-  const max = Math.max(1, ...values);
-  const xStep = plotWidth / points.length;
-  const barWidth = Math.min(26, xStep * 0.62);
-  const x = (index) => left + xStep * index + xStep / 2;
-  const y = (amount) => top + plotHeight - (amount / max) * plotHeight;
-  const ticks = [max, max / 2, 0];
-  const formatTick = (value) => formatCents(BigInt(Math.round(value)), locale, reportCurrency);
-  const maxLabels = 8;
-  const labelStep = Math.max(1, Math.ceil(points.length / maxLabels));
-  const labelIndices = points.map((_, index) => index).filter((index) => index % labelStep === 0 || index === points.length - 1);
-  const accountColor = (accountId) => {
-    const index = accounts.findIndex((account) => account.id === accountId);
-    return ['#6f9278', '#7b91aa', '#b48a68', '#927fa8', '#bd7775', '#a69553'][(index < 0 ? accounts.length : index) % 6];
-  };
-  const dateLabel = (date) => new Intl.DateTimeFormat(locale, { month: 'numeric', day: 'numeric' }).format(new Date(`${date}T12:00:00`));
-  return <div className="chart-scroll income-bars-chart"><svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-    {ticks.map((tick, index) => { const yy = y(tick); return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} className="chart-gridline" /><text x={left - 8} y={yy + 4} textAnchor="end" className="chart-axis-label">{formatTick(tick)}</text></g>; })}
-    {points.map((point, index) => {
-      const value = Number(point.amount);
-      const topY = y(value);
-      const transaction = point.transaction;
-      const title = `${transaction.title || transaction.note || ''} · ${formatCents(point.amount, locale, reportCurrency)}`;
-      return <g key={transaction.id}><rect x={x(index) - barWidth / 2} y={topY} width={barWidth} height={Math.max(1, top + plotHeight - topY)} rx="3" fill={accountColor(transaction.accountId)}><title>{title}</title></rect></g>;
-    })}
-    {labelIndices.map((index) => <text key={index} x={x(index)} y={height - 10} textAnchor="middle" className="chart-axis-label">{dateLabel(points[index].transaction.transactionDate)}</text>)}
-  </svg></div>;
-}
-
-function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD', t, onCancel, onSubmit, onDelete, embedded = false }) {
-  const [name, setName] = useState(initialBudget?.name ?? '');
-  const [amount, setAmount] = useState(initialBudget?.amount ?? '100.00');
-  const [currency, setCurrency] = useState(initialBudget?.currency || defaultCurrency);
-  const [color, setColor] = useState(initialBudget?.color || budgetColors[0]);
-  const [error, setError] = useState('');
-  const editing = Boolean(initialBudget);
-
-  function submit(event) {
-    event?.preventDefault();
-    const cleanName = name.trim();
-    const cents = moneyToCents(amount.trim());
-    if (!cleanName || cleanName.length > 60 || cents === null || cents <= 0n) return setError(t('fieldRequired'));
-    const existingCategory = categories.find((category) => category.type === 'expense' && category.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase());
-    const categoryId = initialBudget?.categoryId || existingCategory?.id || crypto.randomUUID();
-    const duplicate = budgets.some((budget) => budget.id !== initialBudget?.id && (budget.categoryId === categoryId || budget.name?.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase()));
-    if (duplicate) return setError(t('budgetAlreadyExists'));
-    setError('');
-    onSubmit({
-      id: initialBudget?.id ?? crypto.randomUUID(),
-      name: cleanName,
-      categoryId,
-      amount: centsToAmount(cents),
-      currency,
-      color
-    });
-  }
-
-  const fields = <>
-    <label className="field"><span>{t('budgetName')}</span><input name="budgetName" type="text" maxLength="60" value={name} onChange={(event) => setName(event.target.value)} autoFocus={!embedded} required /></label>
-    <label className="field"><span>{t('defaultCurrency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-    <label className="field"><span>{t('monthlyAvailable')}</span><div className="budget-amount-input"><span>{currencySymbol(currency)}</span><input name="budgetAmount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></div></label>
-    <div className="field"><span>{t('budgetCardColor')}</span><div className="budget-color-picker" role="group" aria-label={t('budgetCardColor')}>
-      {budgetColors.map((value) => <button key={value} type="button" className={`budget-color-swatch ${color === value ? 'selected' : ''}`} style={{ '--swatch-color': value }} onClick={() => setColor(value)} aria-label={value} aria-pressed={color === value} />)}
-    </div></div>
-    {error && <div className="inline-error">{error}</div>}
-  </>;
-
-  if (embedded) return <div className="inline-budget-editor" onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}>
-    <div className="inline-budget-heading"><strong>{t('addBudget')}</strong><button type="button" className="text-button" onClick={onCancel}>{t('cancel')}</button></div>
-    {fields}
-    <button className="primary-button" type="button" onClick={() => submit()}>{t('saveBudget')}</button>
-  </div>;
-
-  return <section className="panel side-editor budget-editor">
-    <div className="editor-heading"><div><div className="eyebrow">{t('budgets')}</div><h2>{editing ? t('editBudget') : t('addBudget')}</h2></div><button className="icon-button close-editor" type="button" onClick={onCancel} aria-label={t('close')}>×</button></div>
-    <p className="editor-copy">{t('budgetEditorHint')}</p>
-    <form onSubmit={submit}>
-      {fields}
-      <div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveBudget')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteBudget'))) onDelete(initialBudget.id); }}>{t('deleteBudget')}</button>}</div>
-    </form>
-  </section>;
-}
-
-function ActivityPage({ items, allTransactions, categories, budgets, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
-  const [filters, setFilters] = useState({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' });
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const monthDate = new Date(`${month}-01T12:00:00`);
-  const monthOptions = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(monthDate);
-    date.setMonth(monthDate.getMonth() + index - 3);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const nativeTotals = new Map();
-  allTransactions.filter((item) => item.transactionDate.startsWith(month)).forEach((item) => {
-    if (!nativeTotals.has(item.currency)) nativeTotals.set(item.currency, { expense: 0n, income: 0n });
-    nativeTotals.get(item.currency)[item.type] += moneyToCents(item.amount) ?? 0n;
-  });
-  let expense = 0n;
-  let income = 0n;
-  let totalsAvailable = true;
-  for (const [currency, values] of nativeTotals) {
-    const convertedExpense = convertCents(values.expense, currency, reportCurrency, fx.rates);
-    const convertedIncome = convertCents(values.income, currency, reportCurrency, fx.rates);
-    if (convertedExpense === null || convertedIncome === null) {
-      totalsAvailable = false;
-      break;
-    }
-    expense += convertedExpense;
-    income += convertedIncome;
-  }
-  const net = income - expense;
-  const ratesMessage = fx.status === 'loading' ? t('ratesLoading')
-    : (!totalsAvailable || fx.status === 'error') ? t('ratesUnavailable')
-      : fx.stale ? t('ratesCached')
-        : fx.date ? `${t('ratesThrough')} ${fx.date}` : '';
-  const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
-  const incomeSources = categories.filter((category) => category.type === 'income');
-  const minimum = filters.minimum ? moneyToCents(filters.minimum) : null;
-  const maximum = filters.maximum ? moneyToCents(filters.maximum) : null;
-  const filteredItems = items.filter((item) => {
-    if (filters.type && item.type !== filters.type) return false;
-    if (filters.startDate && item.transactionDate < filters.startDate) return false;
-    if (filters.endDate && item.transactionDate > filters.endDate) return false;
-    const isAutoAdded = Boolean(item.recurring?.enabled || item.recurrenceSourceId);
-    if (filters.autoAdd === 'automatic' && !isAutoAdded) return false;
-    if (filters.autoAdd === 'manual' && isAutoAdded) return false;
-    if (filters.type !== 'income' && filters.accountId && item.accountId !== filters.accountId) return false;
-    if (filters.type === 'income' && filters.sourceId && item.categoryId !== filters.sourceId) return false;
-    if (filters.type !== 'income' && filters.budgetId) {
-      const budget = budgets.find((entry) => entry.id === filters.budgetId);
-      const categoryMatches = budget?.categoryId
-        ? item.categoryId === budget.categoryId
-        : categoryMap.get(item.categoryId)?.trim().toLocaleLowerCase() === budget?.name?.trim().toLocaleLowerCase();
-      if (!categoryMatches) return false;
-    }
-    if (filters.minimum || filters.maximum) {
-      const value = convertCents(moneyToCents(item.amount) ?? 0n, item.currency, reportCurrency, fx.rates);
-      if (value === null) return false;
-      if (minimum !== null && value < minimum) return false;
-      if (maximum !== null && value > maximum) return false;
-    }
-    return true;
-  });
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
-
-  return (
-    <section className="page-section activity-page">
-      <PageTitle title={t('activity')} detail={t('activityHint')} />
-      <nav className="activity-month-strip" aria-label={t('month')}>
-        {monthOptions.map((value) => {
-          const date = new Date(`${value}-01T12:00:00`);
-          const label = new Intl.DateTimeFormat(locale, { month: 'long' }).format(date);
-          return <button key={value} type="button" className={`activity-month-tab ${value === month ? 'selected' : ''}`} onClick={() => onMonthChange(value)} aria-pressed={value === month} title={value}>{label}</button>;
-        })}
-        <label className="activity-month-picker"><span className="sr-only">{t('month')}</span><input type="month" value={month} onChange={(event) => onMonthChange(event.target.value)} aria-label={t('month')} /></label>
-      </nav>
-      <section className="activity-summary" aria-label={t('activitySummary')}>
-        <div className="activity-currency-controls">
-          <label><span>{t('summaryCurrency')}</span><select value={reportCurrency} onChange={(event) => onReportCurrencyChange(event.target.value)}>{currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select></label>
-          <div className="activity-rates-status"><span>{ratesMessage}</span><button type="button" onClick={onRefreshFx} disabled={fx.status === 'loading'} aria-label={t('refreshRates')} title={t('refreshRates')}>↻</button></div>
-        </div>
-        <div className="activity-summary-row">
-        <span className="activity-stat expense"><small>{t('expense')}</small><strong>{totalsAvailable ? formatSignedCents(expense, locale, reportCurrency, '-') : '—'}</strong></span>
-        <span className="activity-stat income"><small>{t('income')}</small><strong>{totalsAvailable ? formatSignedCents(income, locale, reportCurrency, '+') : '—'}</strong></span>
-        <span className={`activity-stat net ${net < 0n ? 'negative' : 'positive'}`}><small>{t('balance')}</small><strong>{totalsAvailable ? formatSignedCents(net, locale, reportCurrency) : '—'}</strong></span>
-        </div>
-      </section>
-      <details className="activity-filters" open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)}>
-        <summary>{t('filterTransactions')}{activeFilterCount > 0 && <span className="activity-filter-count">{activeFilterCount}</span>}<svg className="budget-expand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
-        <div className="activity-filter-grid">
-          <label className="activity-filter-field"><span>{t('transactionType')}</span><select value={filters.type} onChange={(event) => { const type = event.target.value; setFilters((current) => ({ ...current, type, budgetId: '', accountId: '', sourceId: '' })); }}><option value="">{t('allTransactionTypes')}</option><option value="expense">{t('expenseType')}</option><option value="income">{t('incomeType')}</option></select></label>
-          <div className="activity-filter-field"><span>{t('dateRange')}</span><div className="activity-filter-range"><input aria-label={t('startDate')} type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} /><input aria-label={t('endDate')} type="date" value={filters.endDate} onChange={(event) => setFilters((current) => ({ ...current, endDate: event.target.value }))} /></div></div>
-          <div className="activity-filter-field"><span>{t('amountRange')} · {reportCurrency}</span><div className="activity-filter-range"><input aria-label={t('minimumAmount')} type="number" min="0" step="0.01" placeholder={t('minimumAmount')} value={filters.minimum} onChange={(event) => setFilters((current) => ({ ...current, minimum: event.target.value }))} /><input aria-label={t('maximumAmount')} type="number" min="0" step="0.01" placeholder={t('maximumAmount')} value={filters.maximum} onChange={(event) => setFilters((current) => ({ ...current, maximum: event.target.value }))} /></div></div>
-          {filters.type === 'income' && <label className="activity-filter-field"><span>{t('filterIncomeSource')}</span><select value={filters.sourceId} onChange={(event) => setFilters((current) => ({ ...current, sourceId: event.target.value }))}><option value="">{t('allSources')}</option>{incomeSources.map((source) => <option key={source.id} value={source.id}>{incomeSourceLabel(source.name, t)}</option>)}</select></label>}
-          {filters.type !== 'income' && <><label className="activity-filter-field"><span>{t('filterBudget')}</span><select value={filters.budgetId} onChange={(event) => setFilters((current) => ({ ...current, budgetId: event.target.value }))}><option value="">{t('allBudgets')}</option>{budgets.map((budget) => <option key={budget.id} value={budget.id}>{budget.name || categoryMap.get(budget.categoryId) || t('budgets')}</option>)}</select></label>
-          <label className="activity-filter-field"><span>{t('filterAccount')}</span><select value={filters.accountId} onChange={(event) => setFilters((current) => ({ ...current, accountId: event.target.value }))}><option value="">{t('allAccounts')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label></>}
-          <label className="activity-filter-field"><span>{t('filterAutoAdd')}</span><select value={filters.autoAdd} onChange={(event) => setFilters((current) => ({ ...current, autoAdd: event.target.value }))}><option value="">{t('allRecurringTypes')}</option><option value="automatic">{t('recurringOnly')}</option><option value="manual">{t('nonRecurringOnly')}</option></select></label>
-        </div>
-        {activeFilterCount > 0 && <button type="button" className="activity-filter-clear" onClick={() => setFilters({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' })}>{t('clearFilters')}</button>}
-      </details>
-      <TransactionPanel items={filteredItems} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={activeFilterCount ? t('noMatchingTransactions') : t('empty')} />
-    </section>
-  );
-}
-
-function TransactionPanel({ items, categories, accounts, t, language, timeFormat, reportCurrency, fxRates, onDelete, onAdd, onEdit, account, emptyMessage }) {
-  return (
-    <section className="panel transaction-panel">
-      <div className="panel-heading">
-        <div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div>
-        <div className="panel-actions"><span className="count-pill">{items.length} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
-      </div>
-      {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fxRates} onDelete={onDelete} onEdit={onEdit} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{emptyMessage || (account ? t('empty') : t('chooseAccountFirst'))}</p></div>}
-    </section>
-  );
-}
-
-function incomeSourceLabel(name, t) {
-  const key = { other: 'otherSource', salary: 'salarySource', bonus: 'bonusSource' }[name.trim().toLocaleLowerCase()];
-  return key ? t(key) : name;
-}
-
-function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget, onCreateIncomeSource }) {
-  const [accountId, setAccountId] = useState(initialTransaction?.accountId ?? account?.id ?? accounts[0]?.id ?? '');
-  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
-  const [addingAccount, setAddingAccount] = useState(false);
-  const [type, setType] = useState(initialTransaction?.type ?? 'expense');
-  const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
-  const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
-  const [monthlyAuto, setMonthlyAuto] = useState(Boolean(initialTransaction?.recurring?.enabled));
-  const [recurrenceSchedule, setRecurrenceSchedule] = useState(initialTransaction?.recurring?.schedule ?? 'month-start');
-  const [recurrenceDay, setRecurrenceDay] = useState(String(initialTransaction?.recurring?.dayOfMonth ?? Number((initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today()).slice(-2))));
-  const [recurrenceTime, setRecurrenceTime] = useState(initialTransaction?.recurring?.time ?? initialTransaction?.transactionTime ?? openedAt?.transactionTime ?? '09:00');
-  const [addingBudget, setAddingBudget] = useState(false);
-  const [addingIncomeSource, setAddingIncomeSource] = useState(false);
-  const [noteImage, setNoteImage] = useState(initialTransaction?.noteImage ?? '');
-  const [error, setError] = useState('');
-  const [working, setWorking] = useState(false);
-  const isGeneratedOccurrence = Boolean(initialTransaction?.recurrenceSourceId);
-  const transactionTime = initialTransaction
-    ? (initialTransaction.transactionTime || '')
-    : (openedAt?.transactionTime || '');
-  const selectedAccount = accounts.find((item) => item.id === accountId) ?? account ?? accounts[0] ?? null;
-  const categoryMap = new Map(categories.map((item) => [item.id, item]));
-  const choiceMap = new Map();
-  if (type === 'income') {
-    ['other', 'salary', 'bonus'].forEach((name) => {
-      const item = categories.find((category) => category.type === 'income' && category.name.trim().toLocaleLowerCase() === name);
-      if (item) choiceMap.set(item.id, item);
-    });
-    categories.filter((category) => category.type === 'income' && !category.archived).forEach((category) => choiceMap.set(category.id, category));
-  } else {
-    ['none', 'other'].forEach((name) => {
-      const item = categories.find((category) => category.type === 'expense' && category.name.trim().toLocaleLowerCase() === name);
-      if (item) choiceMap.set(item.id, item);
-    });
-    budgets.forEach((budget) => {
-      const id = budget.categoryId || budget.id;
-      const source = categoryMap.get(id);
-      if (id && !choiceMap.has(id)) choiceMap.set(id, { id, name: budget.name || source?.name || t('budgets'), type: 'expense', archived: false });
-    });
-  }
-  const choices = [...choiceMap.values()];
-  const selectedCategoryId = choices.some((item) => item.id === categoryId) ? categoryId : choices[0]?.id;
-  const weekday = transactionDate ? new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long' }).format(new Date(`${transactionDate}T12:00:00`)) : '';
-
-  function chooseNoteImage(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) {
-      setError(t('imageTypeError'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setNoteImage(reader.result);
-        setError('');
-      }
-    };
-    reader.onerror = () => setError(t('imageTypeError'));
-    reader.readAsDataURL(file);
-  }
-
-  async function submit(event) {
-    event.preventDefault();
-    if (!selectedAccount || working) return;
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const title = String(form.get('title') ?? '').trim();
-    const amount = String(form.get('amount')).trim();
-    const cents = moneyToCents(amount);
-    if (!title) return setError(t('fieldRequired'));
-    if (!cents || cents <= 0n) return setError(t('fieldRequired'));
-    if (!selectedCategoryId) return setError(t('fieldRequired'));
-    if (monthlyAuto && !window.confirm(t('confirmMonthlyAutoAdd'))) return;
-    let recurring;
-    if (monthlyAuto) {
-      const recurringDay = recurrenceSchedule === 'same-day' ? Number(transactionDate.slice(-2)) : Number(recurrenceDay);
-      const recurringTimeValue = recurrenceSchedule === 'custom' ? recurrenceTime : (transactionTime || '09:00');
-      const sameRule = initialTransaction?.recurring?.enabled
-        && initialTransaction.recurring.schedule === recurrenceSchedule
-        && Number(initialTransaction.recurring.dayOfMonth || 0) === (['custom', 'same-day'].includes(recurrenceSchedule) ? recurringDay : 0)
-        && initialTransaction.recurring.time === recurringTimeValue;
-      recurring = sameRule
-        ? initialTransaction.recurring
-        : makeMonthlyRecurrence(recurrenceSchedule, recurringDay, recurringTimeValue, today());
-      if (!recurring) return setError(t('fieldRequired'));
-    } else if (initialTransaction?.recurring) {
-      recurring = { ...initialTransaction.recurring, enabled: false };
-    }
-    setError('');
-    setWorking(true);
-    try {
-      let noteImagePath = '';
-      if (user && noteImage.startsWith('data:')) {
-        const upload = await apiRequest('/auth/transaction-images', {
-          method: 'POST', body: JSON.stringify({ image: noteImage })
-        });
-        noteImagePath = upload.data.path;
-      } else if (user) {
-        noteImagePath = noteImage;
-      }
-      onSubmit({
-        id: initialTransaction?.id ?? crypto.randomUUID(), type, amount: centsToAmount(cents), currency: selectedAccount.currency,
-        accountId: selectedAccount.id, categoryId: selectedCategoryId,
-        title,
-        transactionDate, transactionTime, note: String(form.get('note') ?? '').trim(),
-        ...(recurring ? { recurring } : {}),
-        ...(initialTransaction?.recurrenceSourceId ? { recurrenceSourceId: initialTransaction.recurrenceSourceId, recurrenceMonth: initialTransaction.recurrenceMonth } : {}),
-        ...(user && noteImagePath ? { noteImage: noteImagePath } : {})
-      });
-      formElement.reset();
-      setNoteImage('');
-    } catch (submitError) {
-      setError(submitError.message || t('saveFailed'));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  return (
-    <section className="panel side-editor transaction-editor">
-      <div className="editor-heading"><div className="editor-heading-title"><div className="eyebrow">{t('activity')}</div><h2>{initialTransaction ? t('editTransaction') : t('newTransaction')}</h2></div><div className="editor-heading-side"><div className="editor-time"><strong>{formatTransactionTime(transactionTime, timeFormat, language)}</strong></div></div></div>
-      <button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>×</button>
-      {!selectedAccount ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" type="button" onClick={() => setAddingAccount(true)}>{t('createFirstAccount')}</button>{addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); }} />}</div> : <>
-        <div className="transaction-account-switcher">
-          <button className="editing-account account-switch-trigger" type="button" aria-expanded={accountPickerOpen} onClick={() => { setAccountPickerOpen((current) => !current); setAddingAccount(false); }}>
-            <span className="account-glyph">{selectedAccount.name.slice(0, 1).toUpperCase()}</span><span className="editing-account-copy"><strong>{selectedAccount.name}</strong><small>{selectedAccount.currency}</small></span><svg className={`budget-expand-mark account-switch-chevron ${accountPickerOpen ? 'is-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-          </button>
-          {accountPickerOpen && <div className="transaction-account-options" role="group" aria-label={t('account')}>
-            {accounts.map((item) => <button key={item.id} type="button" className={`transaction-account-option ${item.id === selectedAccount.id ? 'selected' : ''}`} aria-pressed={item.id === selectedAccount.id} onClick={() => { setAccountId(item.id); setAccountPickerOpen(false); }}><strong>{item.name}</strong><small>{item.currency}</small></button>)}
-            <button type="button" className="transaction-account-option transaction-account-add" aria-label={t('addAccount')} title={t('addAccount')} onClick={() => setAddingAccount(true)}>+</button>
-          </div>}
-          {addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); setAccountPickerOpen(false); }} />}
-        </div>
-        <form onSubmit={submit}>
-          <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); setAddingBudget(false); setAddingIncomeSource(false); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); setAddingBudget(false); }}>{t('incomeType')}</button></div></label>
-          <label className="field"><span>{t('titleLabel')}</span><input name="title" type="text" maxLength="100" defaultValue={initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || ''} required autoFocus /></label>
-          <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><span>{currencySymbol(selectedAccount.currency)}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /></div></label>
-          <div className="field"><span>{type === 'expense' ? t('budgets') : t('source')}</span><div className="category-chip-list" role="group" aria-label={type === 'expense' ? t('budgets') : t('source')}>
-            {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{type === 'income' ? incomeSourceLabel(item.name, t) : item.name}</button>)}
-            {type === 'expense' && <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>}
-            {type === 'income' && <button type="button" className="category-chip category-add-chip" aria-label={t('addIncomeSource')} title={t('addIncomeSource')} onClick={() => setAddingIncomeSource((current) => !current)}>+</button>}
-          </div>
-          {addingBudget && <BudgetForm embedded categories={categories} budgets={budgets} defaultCurrency={selectedAccount.currency} t={t} onCancel={() => setAddingBudget(false)} onSubmit={(budget) => { onCreateBudget(budget); setCategoryId(budget.categoryId); setAddingBudget(false); }} />}
-          {addingIncomeSource && <IncomeSourceForm embedded categories={categories} t={t} onCancel={() => setAddingIncomeSource(false)} onSubmit={(source) => { onCreateIncomeSource(source); setCategoryId(source.id); setAddingIncomeSource(false); }} />}
-          </div>
-          <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
-          {!isGeneratedOccurrence && <div className="field recurring-field">
-            <label className="recurring-toggle"><input type="checkbox" checked={monthlyAuto} onChange={(event) => setMonthlyAuto(event.target.checked)} /><span>{t('monthlyAutoAdd')}</span></label>
-            {monthlyAuto && <div className="recurring-options">
-              <label className="field"><span>{t('recurrenceTiming')}</span><select value={recurrenceSchedule} onChange={(event) => setRecurrenceSchedule(event.target.value)}><option value="month-start">{t('monthStart')}</option><option value="month-end">{t('monthEnd')}</option><option value="same-day">{t('sameDayMonthly')}</option><option value="custom">{t('customTime')}</option></select></label>
-              {recurrenceSchedule === 'custom' && <div className="recurring-custom-fields"><label className="field"><span>{t('dayOfMonth')}</span><input type="number" min="1" max="31" value={recurrenceDay} onChange={(event) => setRecurrenceDay(event.target.value)} required /></label><label className="field"><span>{t('recurrenceTime')}</span><input type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} required /></label></div>}
-              <small>{t('monthlyAutoAddHint')}</small>
-            </div>}
-          </div>}
-          <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>
-          {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImage ? t('changeImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={chooseNoteImage} /></label>{noteImage && <div className="note-image-preview"><img src={noteImage} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImage('')}>{t('removeImage')}</button></div>}</div>}
-          {error && <div className="inline-error">{error}</div>}
-          <div className="transaction-form-actions">
-            <button className="primary-button" type="submit" disabled={working}>{working ? '?' : initialTransaction ? t('updateTransaction') : t('save')} <span>{initialTransaction ? '↻' : '+'}</span></button>
-            {initialTransaction && <button className="delete-transaction-button" type="button" onClick={() => confirmDeleteTransaction(initialTransaction.id, t, onDelete)} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 3v6m4-6v6" /></svg><span>{t('delete')}</span></button>}
-          </div>
-        </form>
-      </>}
-    </section>
-  );
-}
-
-function confirmDeleteTransaction(id, t, onDelete) {
-  if (window.confirm(t('confirmDelete'))) onDelete(id);
-}
-
-function TransactionList({ items, categories, accounts = [], t, language, timeFormat, reportCurrency, fxRates, onDelete, onEdit }) {
-  const [tooltipId, setTooltipId] = useState(null);
-  const hoverTimer = useRef(null);
-  useEffect(() => () => clearTimeout(hoverTimer.current), []);
-  const categoryMap = new Map(categories.map((item) => [item.id, item]));
-  const accountMap = new Map(accounts.map((item) => [item.id, item.name]));
-  const transactionCategoryName = (item) => {
-    const category = categoryMap.get(item.categoryId);
-    return category ? (item.type === 'income' ? incomeSourceLabel(category.name, t) : category.name) : undefined;
-  };
-  const groups = items.reduce((result, item) => {
-    const last = result[result.length - 1];
-    if (last?.date === item.transactionDate) last.items.push(item);
-    else result.push({ date: item.transactionDate, items: [item] });
-    return result;
-  }, []);
-  const locale = language === 'zh' ? 'zh-CN' : 'en-US';
-  const formatGroupDate = (date) => new Intl.DateTimeFormat(locale, {
-    weekday: 'long', month: 'short', day: 'numeric'
-  }).format(new Date(`${date}T12:00:00`));
-  function startTooltip(id) {
-    clearTimeout(hoverTimer.current);
-    setTooltipId(null);
-    hoverTimer.current = setTimeout(() => setTooltipId(id), 550);
-  }
-  function stopTooltip() {
-    clearTimeout(hoverTimer.current);
-    hoverTimer.current = null;
-    setTooltipId(null);
-  }
-  return (
-    <div className="transaction-list">
-      {groups.map((group) => <section className="transaction-date-group" key={group.date}>
-        <h3>{formatGroupDate(group.date)}</h3>
-        {group.items.map((item) => <article className={`transaction-row ${tooltipId === item.id ? 'tooltip-visible' : ''}`} key={item.id} role="button" tabIndex={0} onMouseEnter={() => startTooltip(item.id)} onMouseLeave={stopTooltip} onClick={() => onEdit(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item); } }}>
-          <div className="transaction-info">
-            <strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong>
-            {item.noteImage && <img className="transaction-note-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
-            <div className="transaction-meta-tags">
-              {item.transactionTime && <span className="transaction-time-tag">{formatTransactionTime(item.transactionTime, timeFormat, language)}</span>}
-              {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
-              <span className="transaction-tag">{transactionCategoryName(item) || '\u2014'}</span>
-              {(item.recurring?.enabled || item.recurrenceSourceId) && <span className="transaction-recurring-mark" title={t('monthlyAutoAdd')} aria-label={t('monthlyAutoAdd')}><span aria-hidden="true">{'\u21bb'}</span>{t('monthlyAutoAdd')}</span>}
-            </div>
-          </div>
-          <div className="transaction-value-group"><strong className={`transaction-value ${item.type}`}>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, item.type === 'income' ? '+' : '-')}</strong>{reportCurrency && item.currency !== reportCurrency && (() => {
-            const converted = convertCents(moneyToCents(item.amount) ?? 0n, item.currency, reportCurrency, fxRates);
-            return converted === null ? null : <small className="transaction-converted">{formatSignedCents(converted, locale, reportCurrency, item.type === 'income' ? '+' : '-')}</small>;
-          })()}</div>
-          <button className="transaction-delete-button" onClick={(event) => { event.stopPropagation(); confirmDeleteTransaction(item.id, t, onDelete); }} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg></button>
-          {tooltipId === item.id && <div className="transaction-tooltip" role="tooltip">
-            <div className="transaction-tooltip-heading"><strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong><b className={item.type}>{formatSignedCents(moneyToCents(item.amount) ?? 0n, locale, item.currency, item.type === 'income' ? '+' : '-')}</b></div>
-            <div className="transaction-tooltip-meta">
-              <span className="transaction-tooltip-meta-left">{formatGroupDate(item.transactionDate)}{item.transactionTime ? ` · ${formatTransactionTime(item.transactionTime, timeFormat, language)}` : ''}{(item.recurring?.enabled || item.recurrenceSourceId) && <span className="transaction-tooltip-recurring">↻ {t('monthlyAutoAdd')}</span>}</span>
-              <span className="transaction-tooltip-meta-right">{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span>
-            </div>
-            {item.note && <p>{item.note}</p>}
-            {item.noteImage && <img className="transaction-tooltip-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
-          </div>}
-        </article>)}
-      </section>)}
-    </div>
-  );
-}
-
-function TrendChart({ account, points, t, locale }) {
-  const width = 700;
-  const height = 250;
-  const left = 72;
-  const right = 20;
-  const top = 20;
-  const bottom = 42;
-  const chartWidth = width - left - right;
-  const chartHeight = height - top - bottom;
-  const max = Math.max(1, ...points.flatMap((item) => [Number(item.income), Number(item.expense)]));
-  const x = (index) => left + index * (chartWidth / (points.length - 1));
-  const y = (amount) => top + chartHeight - (Number(amount) / max) * chartHeight;
-  const smoothPath = (type) => {
-    const coordinates = points.map((item, index) => ({ x: x(index), y: y(item[type]) }));
-    if (coordinates.length === 0) return '';
-    if (coordinates.length === 1) return `M ${coordinates[0].x} ${coordinates[0].y}`;
-    const slopes = coordinates.slice(0, -1).map((point, index) =>
-      (coordinates[index + 1].y - point.y) / (coordinates[index + 1].x - point.x));
-    const tangents = coordinates.map((_, index) => {
-      if (index === 0) return slopes[0];
-      if (index === coordinates.length - 1) return slopes.at(-1);
-      const previous = slopes[index - 1];
-      const next = slopes[index];
-      return previous * next <= 0 ? 0 : (2 * previous * next) / (previous + next);
-    });
-
-    for (let index = 0; index < slopes.length; index += 1) {
-      const slope = slopes[index];
-      if (slope === 0) {
-        tangents[index] = 0;
-        tangents[index + 1] = 0;
-        continue;
-      }
-      const alpha = tangents[index] / slope;
-      const beta = tangents[index + 1] / slope;
-      const magnitude = alpha * alpha + beta * beta;
-      if (magnitude > 9) {
-        const scale = 3 / Math.sqrt(magnitude);
-        tangents[index] = scale * alpha * slope;
-        tangents[index + 1] = scale * beta * slope;
-      }
-    }
-
-    return coordinates.slice(1).reduce((path, current, index) => {
-      const previous = coordinates[index];
-      const segmentWidth = current.x - previous.x;
-      const control1 = { x: previous.x + segmentWidth / 3, y: previous.y + tangents[index] * segmentWidth / 3 };
-      const control2 = { x: current.x - segmentWidth / 3, y: current.y - tangents[index + 1] * segmentWidth / 3 };
-      const start = index === 0 ? `M ${previous.x} ${previous.y}` : path;
-      return `${start} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${current.x} ${current.y}`;
-    }, '');
-  };
-  const ticks = [0, max / 2, max];
-  const formatTick = (cents) => formatCents(BigInt(Math.round(cents)), locale, account.currency);
-  return (
-    <section className="panel trend-panel">
-      <div className="panel-heading"><div><div className="eyebrow">{t('fiveDayTrend')}</div><h2>{account.name}</h2></div><span className="trend-currency">{account.currency}</span></div>
-      <div className="chart-legend"><span><i className="legend-income" />{t('income')}</span><span><i className="legend-expense" />{t('expense')}</span></div>
-      <div className="chart-scroll">
-        <svg className="trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t('fiveDayTrend')}>
-          {ticks.map((tick, index) => {
-            const yy = y(BigInt(Math.round(tick)));
-            return <g key={index}><line x1={left} x2={width - right} y1={yy} y2={yy} className="chart-gridline" /><text x={left - 9} y={yy + 4} textAnchor="end" className="chart-axis-label">{formatTick(tick)}</text></g>;
-          })}
-          <path d={smoothPath('income')} className="chart-line income-line" />
-          <path d={smoothPath('expense')} className="chart-line expense-line" />
-          {points.map((point, index) => <g key={point.date}>
-            <circle cx={x(index)} cy={y(point.income)} r="4" className="chart-point income-point" />
-            <circle cx={x(index)} cy={y(point.expense)} r="4" className="chart-point expense-point" />
-            <text x={x(index)} y={height - 12} textAnchor="middle" className="chart-axis-label">{point.label}</text>
-          </g>)}
-        </svg>
-      </div>
-    </section>
-  );
-}
-
-function PageTitle({ title, detail }) {
-  return <header className="page-heading"><div><div className="eyebrow">MINT FINANCE</div><h1>{title}</h1><p>{detail}</p></div></header>;
-}
-
-function PlaceholderPage({ title, detail }) {
-  return <section className="page-section"><PageTitle title={title} detail={detail} /><div className="panel placeholder-panel"><span className="empty-icon">?</span><p>{detail}</p></div></section>;
-}
-
-const AI_TEST_ERROR_KEYS = {
-  AI_TEST_KEY_MISSING: 'aiTestKeyMissing',
-  AI_TEST_ASSIGNMENT_MISSING: 'aiTestAssignmentMissing',
-  AI_TEST_MODEL_NOT_FOUND: 'aiTestModelNotFound',
-  AI_TEST_PROVIDER_NOT_FOUND: 'aiTestProviderNotFound',
-  AI_TEST_ENDPOINT_INVALID: 'aiTestEndpointInvalid',
-  AI_TEST_INSECURE_ENDPOINT: 'aiTestInsecureEndpoint',
-  AI_TEST_ENDPOINT_BLOCKED: 'aiTestEndpointBlocked',
-  AI_TEST_AUTH_FAILED: 'aiTestAuthFailed',
-  AI_TEST_MODEL_OR_ENDPOINT_NOT_FOUND: 'aiTestModelOrEndpointNotFound',
-  AI_TEST_RATE_LIMITED: 'aiTestRateLimited',
-  AI_TEST_TIMEOUT: 'aiTestTimeout',
-  AI_TEST_PROVIDER_UNAVAILABLE: 'aiTestProviderUnavailable',
-  AI_TEST_NETWORK: 'aiTestNetwork',
-  AI_TEST_DNS_FAILED: 'aiTestNetwork',
-  AI_TEST_REQUEST_REJECTED: 'aiTestRequestRejected',
-  AI_TEST_REDIRECT_UNSUPPORTED: 'aiTestRedirectUnsupported',
-  AI_TEST_INVALID_RESPONSE: 'aiTestInvalidResponse',
-  AI_TEST_RESPONSE_TOO_LARGE: 'aiTestInvalidResponse',
-  AI_TEST_REQUEST_FAILED: 'aiTestRequestFailed',
-  AI_TEST_INVALID_TASK: 'aiTestRequestFailed',
-  AI_TEST_SAVE_FAILED: 'aiTestSaveFailed',
-  AI_TEST_SESSION_EXPIRED: 'aiTestSessionExpired',
-  AI_ENCRYPTION_NOT_CONFIGURED: 'aiTestServerConfiguration',
-  AI_ENCRYPTION_KEY_VERSION_UNSUPPORTED: 'aiTestServerConfiguration'
-};
-const AI_TEST_RETRYABLE_CODES = new Set(['AI_TEST_RATE_LIMITED', 'AI_TEST_TIMEOUT', 'AI_TEST_PROVIDER_UNAVAILABLE', 'AI_TEST_NETWORK', 'AI_TEST_DNS_FAILED']);
-
-function aiProbeRequest(provider, model) {
-  let endpoint;
-  try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
-  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' });
-  if (endpoint.protocol !== 'https:') throw Object.assign(new Error(), { code: 'AI_TEST_INSECURE_ENDPOINT' });
-  const basePath = endpoint.pathname.replace(/\/+$/, '');
-  const headers = { 'content-type': 'application/json', accept: 'application/json' };
-  let url;
-  let body;
-  if (provider.type === 'anthropic') {
-    url = new URL(`${basePath.endsWith('/messages') ? basePath : `${basePath}/messages`}${endpoint.search}`, endpoint.origin);
-    headers['anthropic-version'] = '2023-06-01';
-    body = { model: model.name, max_tokens: 8, messages: [{ role: 'user', content: 'Reply with exactly OK.' }] };
-  } else if (provider.type === 'gemini') {
-    const path = basePath.includes(':generateContent') ? basePath : `${basePath}/models/${encodeURIComponent(model.name)}:generateContent`;
-    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
-    body = { contents: [{ parts: [{ text: 'Reply with exactly OK.' }] }], generationConfig: { maxOutputTokens: 8 } };
-  } else {
-    const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
-    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
-    headers.authorization = 'Bearer';
-    body = { model: model.name, messages: [{ role: 'user', content: 'Reply with exactly OK.' }], max_tokens: 8, stream: false };
-  }
-  return { url, headers, body };
-}
-
-function normalizeAiSettings(settings) {
-  const empty = emptyAiSettings();
-  return {
-    ...empty,
-    ...settings,
-    assignments: { receipt: settings?.assignments?.receipt || '', conversation: settings?.assignments?.conversation || '' }
-  };
-}
-
-async function probeAiModelInBrowser(provider, model, apiKey) {
-  if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
-  const { url, headers, body } = aiProbeRequest(provider, model);
-  if (provider.type === 'gemini') headers['x-goog-api-key'] = apiKey.trim();
-  else if (provider.type === 'anthropic') headers['x-api-key'] = apiKey.trim();
-  else headers.authorization = `Bearer ${apiKey.trim()}`;
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
-  let response;
-  try {
-    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
-  } catch (error) {
-    throw Object.assign(new Error(), { code: error.name === 'AbortError' ? 'AI_TEST_TIMEOUT' : 'AI_TEST_NETWORK' });
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-  if (!response.ok) {
-    const status = response.status;
-    const code = status === 401 || status === 403 ? 'AI_TEST_AUTH_FAILED'
-      : status === 404 ? 'AI_TEST_MODEL_OR_ENDPOINT_NOT_FOUND'
-        : status === 429 ? 'AI_TEST_RATE_LIMITED'
-          : status >= 500 ? 'AI_TEST_PROVIDER_UNAVAILABLE'
-            : status >= 300 ? 'AI_TEST_REDIRECT_UNSUPPORTED'
-              : status === 400 || status === 422 ? 'AI_TEST_REQUEST_REJECTED' : 'AI_TEST_REQUEST_FAILED';
-    throw Object.assign(new Error(), { code });
-  }
-  let payload;
-  try { payload = await response.json(); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' }); }
-  const hasText = provider.type === 'anthropic'
-    ? payload.content?.some((part) => typeof part.text === 'string')
-    : provider.type === 'gemini'
-      ? payload.candidates?.some((candidate) => candidate.content?.parts?.some((part) => typeof part.text === 'string'))
-      : typeof payload.choices?.[0]?.message?.content === 'string';
-  if (!hasText) throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' });
-}
-
-function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat, user }) {
-  const [migrationNotice, setMigrationNotice] = useState(false);
-  const [aiConfig, setAiConfig] = useState(emptyAiSettings);
-  const [providerDraft, setProviderDraft] = useState({ type: 'openai', endpoint: '', apiKey: '' });
-  const [modelDraft, setModelDraft] = useState({ providerId: '', name: '', customName: '' });
-  const [editingModelId, setEditingModelId] = useState(null);
-  const [editingModelDraft, setEditingModelDraft] = useState({ providerId: '', name: '', customName: '' });
-  const [isTestingAiTasks, setIsTestingAiTasks] = useState(false);
-  const [aiTaskTestProgress, setAiTaskTestProgress] = useState(null);
-  const [aiTaskTestResults, setAiTaskTestResults] = useState({});
-  const [providerKeys, setProviderKeys] = useState({});
-  const [showKeys, setShowKeys] = useState({});
-  const [showProviderDraftKey, setShowProviderDraftKey] = useState(false);
-  const [editingProviderId, setEditingProviderId] = useState(null);
-  const [editingEndpointDraft, setEditingEndpointDraft] = useState('');
-  const [editingOriginalProvider, setEditingOriginalProvider] = useState(null);
-  const [editingOriginalKey, setEditingOriginalKey] = useState('');
-  const [aiSaveStatus, setAiSaveStatus] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    setAiSaveStatus('');
-    async function loadAiSettings() {
-      try {
-        if (user) {
-          let response = await migrateLocalAiSettings(apiRequest);
-          if (!response) response = (await apiRequest('/auth/ai-settings')).data;
-          if (!active) return;
-          setAiConfig(normalizeAiSettings(response));
-          setProviderKeys({});
-        } else {
-          const local = await loadLocalAiSettings();
-          if (!active) return;
-          setAiConfig(normalizeAiSettings(local.settings));
-          setProviderKeys(local.apiKeys);
-        }
-      } catch {
-        if (!active) return;
-        try {
-          const local = await loadLocalAiSettings();
-          if (!active) return;
-          setAiConfig(normalizeAiSettings(local.settings));
-          setProviderKeys(local.apiKeys);
-          setAiSaveStatus(t('aiMigrationPending'));
-        } catch {
-          const empty = emptyAiSettings();
-          setAiConfig(normalizeAiSettings(empty));
-          setProviderKeys({});
-          setAiSaveStatus(t('aiSettingsUnavailable'));
-        }
-      }
-    }
-    loadAiSettings();
-    return () => { active = false; };
-  }, [user?.id]);
-
-  const providerNames = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini', compatible: t('aiCompatibleProvider') };
-  const endpointPattern = /^https?:\/\/(?:(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z]{2,63}|localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?(?:\/[^\s?#]*)?(?:\?[^\s#]*)?(?:#[^\s]*)?$/i;
-  const providerTypes = ['openai', 'anthropic', 'gemini', 'compatible'];
-  function normalizeEndpoint(value) {
-    const candidate = value.trim();
-    if (!candidate || !endpointPattern.test(candidate)) return '';
-    try {
-      const parsed = new URL(candidate);
-      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
-      parsed.pathname = parsed.pathname.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
-      return parsed.href.replace(/\/$/, parsed.pathname === '/' && !parsed.search && !parsed.hash ? '' : '/');
-    } catch {
-      return '';
-    }
-  }
-  const modelId = () => globalThis.crypto?.randomUUID?.() ?? `model-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const addProvider = async (event) => {
-    event.preventDefault();
-    if (!providerDraft.type || !providerDraft.endpoint.trim() || !providerDraft.apiKey.trim()) {
-      setAiSaveStatus(t('aiProviderRequiredFields'));
-      return;
-    }
-    const endpoint = normalizeEndpoint(providerDraft.endpoint);
-    if (!endpoint) {
-      setAiSaveStatus(t('aiEndpointInvalid'));
-      return;
-    }
-    const provider = { id: modelId(), type: providerDraft.type, endpoint };
-    const nextConfig = { ...aiConfig, providers: [...aiConfig.providers, provider] };
-    const nextKeys = { ...providerKeys, [provider.id]: providerDraft.apiKey.trim() };
-    if (await saveAiSettingsNow(nextConfig, nextKeys)) {
-      setProviderDraft({ type: 'openai', endpoint: '', apiKey: '' });
-      setShowProviderDraftKey(false);
-    }
-  };
-  const beginProviderEdit = (provider) => {
-    setEditingProviderId(provider.id);
-    setEditingEndpointDraft(provider.endpoint);
-    setEditingOriginalProvider(provider);
-    setEditingOriginalKey(providerKeys[provider.id] || '');
-  };
-  const closeProviderEdit = (providerId) => {
-    if (editingOriginalProvider?.id === providerId) {
-      setAiConfig((current) => ({ ...current, providers: current.providers.map((provider) => provider.id === providerId ? editingOriginalProvider : provider) }));
-      setProviderKeys((current) => {
-        const next = { ...current };
-        if (editingOriginalKey) next[providerId] = editingOriginalKey;
-        else delete next[providerId];
-        return next;
-      });
-    }
-    setEditingProviderId(null);
-    setEditingEndpointDraft('');
-    setEditingOriginalProvider(null);
-    setEditingOriginalKey('');
-  };
-  const finishProviderEdit = async (providerId) => {
-    const endpoint = normalizeEndpoint(editingEndpointDraft);
-    if (!endpoint) {
-      setAiSaveStatus(t(editingEndpointDraft.trim() ? 'aiEndpointInvalid' : 'aiEndpointRequired'));
-      return;
-    }
-    const nextConfig = { ...aiConfig, providers: aiConfig.providers.map((provider) => provider.id === providerId ? { ...provider, endpoint } : provider) };
-    const keysToSave = { ...providerKeys };
-    if (!keysToSave[providerId]?.trim() && editingOriginalKey) keysToSave[providerId] = editingOriginalKey;
-    if (await saveAiSettingsNow(nextConfig, keysToSave)) {
-      setEditingProviderId(null);
-      setEditingEndpointDraft('');
-      setEditingOriginalProvider(null);
-      setEditingOriginalKey('');
-    }
-  };
-  const addModel = async (event) => {
-    event.preventDefault();
-    if (!modelDraft.providerId || !modelDraft.name.trim() || !modelDraft.customName.trim()) return;
-    const model = { id: modelId(), providerId: modelDraft.providerId, name: modelDraft.name.trim(), customName: modelDraft.customName.trim() };
-    const nextConfig = { ...aiConfig, models: [...aiConfig.models, model] };
-    if (await saveAiSettingsNow(nextConfig, providerKeys)) setModelDraft((current) => ({ ...current, name: '', customName: '' }));
-  };
-  const beginModelEdit = (model) => {
-    setEditingModelId(model.id);
-    setEditingModelDraft({ providerId: model.providerId, name: model.name, customName: model.customName || model.name });
-  };
-  const closeModelEdit = () => {
-    setEditingModelId(null);
-    setEditingModelDraft({ providerId: '', name: '', customName: '' });
-  };
-  const finishModelEdit = async (modelIdToEdit) => {
-    if (!editingModelDraft.providerId || !editingModelDraft.name.trim() || !editingModelDraft.customName.trim()) return;
-    const nextConfig = {
-      ...aiConfig,
-      models: aiConfig.models.map((model) => model.id === modelIdToEdit ? {
-        ...model,
-        providerId: editingModelDraft.providerId,
-        name: editingModelDraft.name.trim(),
-        customName: editingModelDraft.customName.trim()
-      } : model)
-    };
-    if (await saveAiSettingsNow(nextConfig, providerKeys)) closeModelEdit();
-  };
-  const removeProvider = async (providerId) => {
-    if (!window.confirm(t('confirmDeleteAiProvider'))) return;
-    const models = aiConfig.models.filter((model) => model.providerId !== providerId);
-    const modelIds = new Set(models.map((model) => model.id));
-    const nextConfig = {
-      ...aiConfig,
-      providers: aiConfig.providers.filter((provider) => provider.id !== providerId),
-      models,
-      assignments: Object.fromEntries(Object.entries(aiConfig.assignments).map(([task, assigned]) => [task, modelIds.has(assigned) ? assigned : '']))
-    };
-    const nextKeys = { ...providerKeys };
-    delete nextKeys[providerId];
-    if (await saveAiSettingsNow(nextConfig, nextKeys)) {
-      if (editingProviderId === providerId) {
-        setEditingProviderId(null);
-        setEditingEndpointDraft('');
-        setEditingOriginalProvider(null);
-        setEditingOriginalKey('');
-      }
-    }
-  };
-  const removeModel = async (modelIdToRemove) => {
-    if (!window.confirm(t('confirmDeleteAiModel'))) return;
-    const nextConfig = {
-      ...aiConfig,
-      models: aiConfig.models.filter((model) => model.id !== modelIdToRemove),
-      assignments: Object.fromEntries(Object.entries(aiConfig.assignments).map(([task, assigned]) => [task, assigned === modelIdToRemove ? '' : assigned]))
-    };
-    if (await saveAiSettingsNow(nextConfig, providerKeys) && editingModelId === modelIdToRemove) closeModelEdit();
-  };
-  async function saveAiSettingsNow(config = aiConfig, keys = providerKeys) {
-    setAiSaveStatus(t('aiSaving'));
-    const configuredProviderIds = new Set(config.providers.map((provider) => provider.id));
-    const validModels = config.models.filter((model) => configuredProviderIds.has(model.providerId));
-    const validModelIds = new Set(validModels.map((model) => model.id));
-    config = {
-      ...config,
-      models: validModels,
-      assignments: Object.fromEntries(['receipt', 'conversation'].map((task) => [task, validModelIds.has(config.assignments?.[task]) ? config.assignments[task] : '']))
-    };
-    const providerIds = new Set(config.providers.map((provider) => provider.id));
-    const effectiveKeys = Object.fromEntries(Object.entries(keys).filter(([providerId, value]) => providerIds.has(providerId) && value.trim()));
-    const settings = {
-      providers: config.providers.map(({ id, type, endpoint, hasApiKey }) => ({ id, type, endpoint, hasApiKey: Boolean(effectiveKeys[id] || hasApiKey) })),
-      models: config.models,
-      assignments: config.assignments
-    };
-    if (!user) {
-      try {
-        const savedConfig = { ...config, providers: settings.providers };
-        const savedSettings = { ...settings, providers: savedConfig.providers };
-        await saveLocalAiSettings(savedSettings, effectiveKeys);
-        setAiConfig(savedConfig);
-        setProviderKeys({});
-        setAiSaveStatus(t('saved'));
-        return true;
-      }
-      catch { setAiSaveStatus(t('aiLocalEncryptionUnavailable')); return false; }
-    }
-    try {
-      const response = await apiRequest('/auth/ai-settings', {
-        method: 'PUT',
-        body: JSON.stringify({ ...settings, providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: effectiveKeys })
-      });
-      setAiConfig(response.data);
-      setProviderKeys({});
-      setAiSaveStatus(t('saved'));
-      return true;
-    } catch {
-      setAiSaveStatus(t('aiServerSaveFailed'));
-      return false;
-    }
-  }
-
-  const testAssignedAiTasks = async () => {
-    const tasks = ['receipt', 'conversation'].filter((task) => aiConfig.assignments?.[task]);
-    if (!tasks.length) {
-      setAiTaskTestResults({});
-      setAiSaveStatus(t('aiTestNoAssignedTasks'));
-      return;
-    }
-    const configToTest = normalizeAiSettings(aiConfig);
-    const keysToTest = { ...providerKeys };
-    setAiTaskTestResults({});
-    setIsTestingAiTasks(true);
-    try {
-      if (!await saveAiSettingsNow(configToTest, keysToTest)) {
-        setAiTaskTestResults(Object.fromEntries(tasks.map((task) => [task, { status: 'error', code: 'AI_TEST_SAVE_FAILED', attempts: 0 }])));
-        return;
-      }
-      for (const task of tasks) {
-        let finalCode = 'AI_TEST_REQUEST_FAILED';
-        let succeeded = false;
-        let attemptsMade = 0;
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          attemptsMade = attempt;
-          setAiTaskTestProgress({ task, attempt });
-          try {
-            if (user) {
-              await apiRequest('/auth/ai-settings/test', { method: 'POST', body: JSON.stringify({ task }) });
-            } else {
-              const model = configToTest.models.find((item) => item.id === configToTest.assignments[task]);
-              const provider = configToTest.providers.find((item) => item.id === model?.providerId);
-              if (!model) throw Object.assign(new Error(), { code: 'AI_TEST_MODEL_NOT_FOUND' });
-              if (!provider) throw Object.assign(new Error(), { code: 'AI_TEST_PROVIDER_NOT_FOUND' });
-              await probeAiModelInBrowser(provider, model, keysToTest[provider.id]);
-            }
-            succeeded = true;
-            setAiTaskTestResults((current) => ({ ...current, [task]: { status: 'success', attempts: attempt } }));
-            break;
-          } catch (error) {
-            finalCode = AI_TEST_ERROR_KEYS[error.code] ? error.code : (error.code === 'UNAUTHENTICATED' ? 'AI_TEST_SESSION_EXPIRED' : 'AI_TEST_REQUEST_FAILED');
-            if (!AI_TEST_RETRYABLE_CODES.has(finalCode) || attempt === 3) break;
-            await new Promise((resolve) => window.setTimeout(resolve, 500 * attempt));
-          }
-        }
-        if (!succeeded) {
-          setAiTaskTestResults((current) => ({ ...current, [task]: { status: 'error', code: finalCode, attempts: attemptsMade } }));
-        }
-      }
-    } finally {
-      setIsTestingAiTasks(false);
-      setAiTaskTestProgress(null);
-    }
-  };
-  const aiTaskDefinitions = [['receipt', 'aiTaskReceipts'], ['conversation', 'aiTaskConversation']];
-  const assignedAiTaskCount = aiTaskDefinitions.filter(([task]) => aiConfig.assignments?.[task]).length;
-
-  return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
-    <div className="panel settings-panel">
-      <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh">&#x7B80;&#x4F53;&#x4E2D;&#x6587;</option><option value="en">English</option></select></label>
-      <label className="settings-row"><span><strong>{t('theme')}</strong><small>{t('themeHint')}</small></span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></select></label>
-      <label className="settings-row"><span><strong>{t('timeFormat')}</strong><small>{t('timeFormatHint')}</small></span><select value={timeFormat} onChange={(event) => setTimeFormat(event.target.value)}><option value="12">{t('hourFormat12')}</option><option value="24">{t('hourFormat24')}</option></select></label>
-    </div>
-    <section className="ai-settings-section">
-      <header className="ai-settings-heading"><div><div className="eyebrow">{t('aiManagement')}</div><h2>{t('aiConfiguration')}</h2><p>{t('aiSettingsHint')}</p></div>{aiSaveStatus && <small className="ai-save-status">{aiSaveStatus}</small>}</header>
-      <article className="panel ai-config-card">
-        <div className="ai-step-heading"><span>1</span><div><h3>{t('aiProviders')}</h3><p>{t('aiProviderHint')}</p></div></div>
-        <form className="ai-provider-form" onSubmit={addProvider} noValidate>
-          <label className="field"><span>{t('aiProvider')}</span><select value={providerDraft.type} onChange={(event) => setProviderDraft((current) => ({ ...current, type: event.target.value }))}>{providerTypes.map((type) => <option key={type} value={type}>{providerNames[type]}</option>)}</select></label>
-          <label className="field"><span>{t('aiEndpoint')}</span><input type="url" value={providerDraft.endpoint} onChange={(event) => { setProviderDraft((current) => ({ ...current, endpoint: event.target.value })); setAiSaveStatus(''); }} onBlur={() => { if (providerDraft.endpoint.trim() && !normalizeEndpoint(providerDraft.endpoint)) setAiSaveStatus(t('aiEndpointInvalid')); }} placeholder="https://api.example.com/v1" /></label>
-          <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showProviderDraftKey ? 'text' : 'password'} autoComplete="new-password" value={providerDraft.apiKey} onChange={(event) => setProviderDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder={t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showProviderDraftKey ? t('hide') : t('show')} title={showProviderDraftKey ? t('hide') : t('show')} onClick={() => setShowProviderDraftKey((current) => !current)}><svg viewBox="0 0 24 24" aria-hidden="true">{showProviderDraftKey ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button></div></label>
-          <button className="secondary-button" type="submit" disabled={!providerDraft.type || !providerDraft.endpoint.trim() || !normalizeEndpoint(providerDraft.endpoint) || !providerDraft.apiKey.trim()}>{t('aiAddProvider')}</button>
-        </form>
-        {aiConfig.providers.length > 0 ? <div className="ai-provider-list">{aiConfig.providers.map((provider) => {
-          const isEditing = editingProviderId === provider.id;
-          const keyIsAvailable = provider.hasApiKey || Boolean(providerKeys[provider.id]?.trim());
-          return <div className={`ai-provider-item ${isEditing ? 'is-editing' : ''}`} key={provider.id}>
-            {!isEditing ? <div className="ai-provider-summary">
-              <span className="ai-provider-summary-name"><strong>{providerNames[provider.type] || provider.type}</strong><small>{provider.endpoint}</small></span>
-              <span className="ai-provider-summary-key"><small>{t('aiApiKey')}</small><strong>{keyIsAvailable ? '••••••••••••' : t('aiKeyNotSet')}</strong></span>
-              <span className="ai-provider-summary-actions"><button className="ai-provider-edit-icon" type="button" aria-label={t('aiEditProvider')} title={t('aiEditProvider')} onClick={() => beginProviderEdit(provider)}>✎</button><button className="ai-remove-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></span>
-            </div> : <>
-              <div className="ai-provider-title"><strong>{providerNames[provider.type] || provider.type}</strong><button className="icon-button close-editor ai-provider-close" type="button" aria-label={t('close')} title={t('close')} onClick={() => closeProviderEdit(provider.id)}>×</button></div>
-              <label className="field"><span>{t('aiEndpoint')}</span><input type="url" value={editingEndpointDraft} onChange={(event) => { setEditingEndpointDraft(event.target.value); setAiSaveStatus(''); }} onBlur={() => { const normalized = normalizeEndpoint(editingEndpointDraft); if (normalized) setEditingEndpointDraft(normalized); }} /></label>
-              <label className="field"><span>{t('aiApiKey')}</span><div className="ai-key-input"><input type={showKeys[provider.id] ? 'text' : 'password'} autoComplete="new-password" value={providerKeys[provider.id] || ''} onChange={(event) => setProviderKeys((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={provider.hasApiKey ? t('aiKeySaved') : t('aiKeyPlaceholder')} /><button className="ai-visibility-button" type="button" aria-label={showKeys[provider.id] ? t('hide') : t('show')} title={showKeys[provider.id] ? t('hide') : t('show')} onClick={() => setShowKeys((current) => ({ ...current, [provider.id]: !current[provider.id] }))}><svg viewBox="0 0 24 24" aria-hidden="true">{showKeys[provider.id] ? <><path d="M3 3l18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.2 3.8" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3-.5" /></> : <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}</svg></button></div></label>
-              <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" onClick={() => finishProviderEdit(provider.id)}>{t('aiSaveChanges')}</button><button className="ai-provider-delete-button" type="button" onClick={() => removeProvider(provider.id)}>{t('delete')}</button></div>
-            </>}
-          </div>;
-        })}</div> : <p className="ai-empty-state">{t('aiNoProviders')}</p>}
-      </article>
-
-      <article className="panel ai-config-card">
-        <div className="ai-step-heading"><span>2</span><div><h3>{t('aiModels')}</h3><p>{t('aiModelHint')}</p></div></div>
-        <form className="ai-model-form" onSubmit={addModel}>
-          <label className="field"><span>{t('aiProvider')}</span><select value={modelDraft.providerId} onChange={(event) => setModelDraft((current) => ({ ...current, providerId: event.target.value }))} disabled={!aiConfig.providers.length}><option value="">{t('aiChooseProvider')}</option>{aiConfig.providers.map((provider) => <option key={provider.id} value={provider.id}>{providerNames[provider.type] || provider.type}</option>)}</select></label>
-          <label className="field"><span>{t('aiModelName')}</span><input value={modelDraft.name} onChange={(event) => setModelDraft((current) => ({ ...current, name: event.target.value }))} placeholder={t('aiModelPlaceholder')} /></label>
-          <label className="field"><span>{t('aiModelCustomName')}</span><input value={modelDraft.customName} onChange={(event) => setModelDraft((current) => ({ ...current, customName: event.target.value }))} placeholder={t('aiModelCustomNamePlaceholder')} /></label>
-          <button className="secondary-button" type="submit" disabled={!aiConfig.providers.length || !modelDraft.name.trim() || !modelDraft.customName.trim()}>{t('aiAddModel')}</button>
-        </form>
-        {aiConfig.models.length > 0 && <div className="ai-model-list">{aiConfig.models.map((model) => {
-          const provider = aiConfig.providers.find((item) => item.id === model.providerId);
-          const isEditing = editingModelId === model.id;
-          return <div className={`ai-model-item ${isEditing ? 'is-editing' : ''}`} key={model.id}>
-            {!isEditing ? <>
-              <span><strong>{model.customName || model.name}</strong><small>{model.name} · {providerNames[provider?.type] || provider?.type}</small></span>
-              <div className="ai-model-actions"><button className="ai-provider-edit-icon" type="button" aria-label={t('aiEditModel')} title={t('aiEditModel')} onClick={() => beginModelEdit(model)}>✎</button><button className="ai-remove-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>
-            </> : <>
-              <div className="ai-provider-title"><strong>{model.customName || model.name}</strong><button className="icon-button close-editor ai-provider-close" type="button" aria-label={t('close')} title={t('close')} onClick={closeModelEdit}>×</button></div>
-              <div className="ai-model-edit-grid">
-                <label className="field"><span>{t('aiProvider')}</span><select value={editingModelDraft.providerId} onChange={(event) => setEditingModelDraft((current) => ({ ...current, providerId: event.target.value }))}><option value="">{t('aiChooseProvider')}</option>{aiConfig.providers.map((item) => <option key={item.id} value={item.id}>{providerNames[item.type] || item.type}</option>)}</select></label>
-                <label className="field"><span>{t('aiModelName')}</span><input value={editingModelDraft.name} onChange={(event) => setEditingModelDraft((current) => ({ ...current, name: event.target.value }))} /></label>
-                <label className="field"><span>{t('aiModelCustomName')}</span><input value={editingModelDraft.customName} onChange={(event) => setEditingModelDraft((current) => ({ ...current, customName: event.target.value }))} /></label>
-              </div>
-              <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" disabled={!editingModelDraft.providerId || !editingModelDraft.name.trim() || !editingModelDraft.customName.trim()} onClick={() => finishModelEdit(model.id)}>{t('aiSaveChanges')}</button><button className="ai-provider-delete-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>
-            </>}
-          </div>;
-        })}</div>}      </article>
-
-      <article className="panel ai-config-card">
-        <div className="ai-step-heading"><span>3</span><div><h3>{t('aiTaskAssignments')}</h3><p>{t('aiTaskHint')}</p></div></div>
-        <div className={`ai-task-test-area ${isTestingAiTasks ? 'is-testing' : ''}`}>
-          <div className="ai-task-list">{aiTaskDefinitions.map(([task, label]) => {
-            const result = aiTaskTestResults[task];
-            return <label className="ai-task-row" key={task}>
-              <span className="ai-task-name"><span>{t(label)}</span>{result && <small className={`ai-task-test-result ${result.status}`}>{result.status === 'success' ? t('aiTestSuccess') : t(AI_TEST_ERROR_KEYS[result.code] || 'aiTestRequestFailed')}</small>}</span>
-              <select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length || isTestingAiTasks} onChange={(event) => { setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } })); setAiTaskTestResults((current) => ({ ...current, [task]: undefined })); }}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.customName || model.name}</option>)}</select>
-            </label>;
-          })}</div>
-          {isTestingAiTasks && <div className="ai-task-test-overlay" role="status" aria-live="polite"><span className="ai-test-spinner" aria-hidden="true" /><strong>{t('aiTestRunning')}</strong><small>{aiTaskTestProgress ? `${t(aiTaskTestProgress.task === 'receipt' ? 'aiTaskReceipts' : 'aiTaskConversation')} · ${t('aiTestAttempt')} ${aiTaskTestProgress.attempt}/3` : t('aiTestPreparing')}</small></div>}
-        </div>
-        <p className="ai-task-test-hint">{t('aiTaskTestHint')}</p>
-        <div className="ai-provider-edit-actions"><button className="secondary-button ai-test-button" type="button" disabled={isTestingAiTasks || !assignedAiTaskCount} onClick={testAssignedAiTasks}>{isTestingAiTasks ? t('aiTestRunning') : t('aiTestAssignedTasks')}</button><button className="ai-provider-save-button" type="button" disabled={isTestingAiTasks} onClick={() => saveAiSettingsNow()}>{t('aiSaveChanges')}</button></div>
-      </article>
-    </section>
-    <article className="panel migration-option-card">
-      <div><strong>{t('migrationOption')}</strong><p>{t('migrationOptionHint')}</p>{migrationNotice && <small className="migration-notice">{t('migrationComingSoon')}</small>}</div>
-      <button className="secondary-button" onClick={() => setMigrationNotice(true)}>{t('migrationOption')}</button>
-    </article>
-  </section>;
-}
-
-function ProfileAvatar({ className, src, name }) {
-  if (src) return <img className={`${className} profile-avatar-image`} src={src} alt={name} />;
-  const initials = (name || 'Default User').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'DU';
-  return <span className={className} aria-label={name}>{initials}</span>;
-}
-
-function ProfilePage({ user, anonymousProfile, onAnonymousProfileChange, onUserUpdated, t, onAuthenticated, onSignOut, migration, onMigration }) {
-  const [mode, setMode] = useState('login');
-  const [authOpen, setAuthOpen] = useState(false);
-  const [error, setError] = useState('');
-  const [working, setWorking] = useState(false);
-  const [profileDraft, setProfileDraft] = useState({ username: user?.username ?? anonymousProfile.username, avatar: user?.avatar ?? anonymousProfile.avatar });
-  const [profileSaved, setProfileSaved] = useState(false);
-
-  useEffect(() => {
-    setProfileDraft({ username: user?.username ?? anonymousProfile.username, avatar: user?.avatar ?? anonymousProfile.avatar });
-  }, [user, anonymousProfile.username, anonymousProfile.avatar]);
-
-  function updateProfileField(key, value) {
-    if (user) {
-      setProfileDraft((current) => ({ ...current, [key]: value }));
-      setProfileSaved(false);
-    } else {
-      onAnonymousProfileChange({ ...anonymousProfile, [key]: value });
-    }
-  }
-
-  async function submit(event) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const email = String(form.get('email')).trim();
-    const password = String(form.get('password'));
-    if (mode === 'register') {
-      if (password.length < 12) return setError(t('passwordShort'));
-      if (password !== form.get('confirmPassword')) return setError(t('passwordMismatch'));
-    }
-    setError('');
-    setWorking(true);
-    try {
-      const body = { email, password };
-      if (mode === 'register') {
-        body.username = anonymousProfile.username.trim() || t('defaultUser');
-        body.avatar = anonymousProfile.avatar;
-      }
-      const response = await apiRequest(`/auth/${mode === 'register' ? 'register' : 'login'}`, {
-        method: 'POST', body: JSON.stringify(body)
-      });
-      await onAuthenticated(response.data);
-      setAuthOpen(false);
-    } catch (authError) {
-      setError(authError.message || t('authFailed'));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  function changeAvatar(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) {
-      setError(t('avatarTypeError'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        updateProfileField('avatar', reader.result);
-        setError('');
-      }
-    };
-    reader.onerror = () => setError(t('avatarTypeError'));
-    reader.readAsDataURL(file);
-  }
-
-  async function saveProfile(event) {
-    event.preventDefault();
-    if (!profileDraft.username.trim()) return setError(t('fieldRequired'));
-    setWorking(true);
-    setError('');
-    setProfileSaved(false);
-    try {
-      const response = await apiRequest('/auth/profile', {
-        method: 'PATCH',
-        body: JSON.stringify({ username: profileDraft.username, avatar: profileDraft.avatar })
-      });
-      onUserUpdated(response.data);
-      setProfileSaved(true);
-    } catch (profileError) {
-      setError(profileError.message || t('saveFailed'));
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function migrate(choice) {
-    setWorking(true);
-    setError('');
-    try { await onMigration(choice); }
-    catch { setError(t('saveFailed')); }
-    finally { setWorking(false); }
-  }
-
-  function openAuth(nextMode = 'login') {
-    setMode(nextMode);
-    setError('');
-    setAuthOpen(true);
-  }
-
-  return (
-    <section className="profile-view">
-      <div className="page-heading profile-heading"><div><div className="eyebrow">{t('profile')}</div><h1>{t('security')}</h1><p>{t('profileIntro')}</p></div></div>
-      {migration ? (
-        <article className="panel migration-panel">
-          <span className="migration-icon">?</span><div className="eyebrow">{t('migrationTitle')}</div><h2>{t('migrationTitle')}</h2><p>{t('migrationText')}</p>
-          {error && <div className="inline-error">{error}</div>}
-          <div className="migration-actions"><button className="primary-button" disabled={working} onClick={() => void migrate('merge')}>{t('merge')} <span>?</span></button><button className="secondary-button" disabled={working} onClick={() => void migrate('server')}>{t('keepServer')}</button></div>
-        </article>
-      ) : (
-        <>
-          <article className="panel profile-card">
-            <div className="profile-identity">
-              <div className="profile-avatar-wrap">
-                <ProfileAvatar className="profile-avatar-large" src={user ? profileDraft.avatar : anonymousProfile.avatar} name={user ? profileDraft.username : anonymousProfile.username} />
-                <label className="avatar-change-button">{t('changeAvatar')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={changeAvatar} aria-label={t('changeAvatar')} /></label>
-              </div>
-              <div className="profile-details">
-                {user && <><p className="profile-email">{user.email}</p><small>{t('roleUser')} · {user.baseCurrency}</small></>}
-                <label className="field"><span>{t('username')}</span><input type="text" maxLength="60" value={user ? profileDraft.username : anonymousProfile.username} onChange={(event) => updateProfileField('username', event.target.value)} /></label>
-                <p className="profile-hint">{t(user ? 'profileAccountEditHint' : 'profileEditHint')}</p>
-              </div>
-            </div>
-            {error && !authOpen && <div className="inline-error">{error}</div>}
-            {user ? <div className="profile-signed-actions"><button className="primary-button" onClick={saveProfile} disabled={working}>{working ? '?' : t('saveProfile')}</button><button className="secondary-button" onClick={onSignOut}>{t('signOut')}</button></div> : (
-              <div className="profile-auth-prompt"><p>{t('profileLoginPrompt')}</p><button className="primary-button" onClick={() => openAuth('login')}>{t('loginOrRegister')} <span>?</span></button></div>
-            )}
-            {profileSaved && <p className="profile-save-status">{t('profileSaved')}</p>}
-          </article>
-          {authOpen && <div className="auth-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) setAuthOpen(false); }}>
-            <section className="panel auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
-              <div className="auth-modal-heading"><div><div className="eyebrow">{t('profile')}</div><h2 id="auth-modal-title">{mode === 'register' ? t('register') : t('signIn')}</h2><p>{t('authModalIntro')}</p></div><button className="icon-button auth-modal-close" type="button" onClick={() => setAuthOpen(false)} aria-label={t('close')} disabled={working}>x</button></div>
-              <div className="auth-tabs"><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>{t('signIn')}</button><button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError(''); }}>{t('register')}</button></div>
-              <form onSubmit={submit}>
-                <label className="field"><span>{t('email')}</span><input name="email" type="email" autoComplete="email" required /></label>
-                <label className="field"><span>{t('password')}</span><input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? 12 : 1} maxLength="128" required /></label>
-                {mode === 'register' && <label className="field"><span>{t('confirmPassword')}</span><input name="confirmPassword" type="password" autoComplete="new-password" minLength="12" maxLength="128" required /></label>}
-                {error && <div className="inline-error">{error}</div>}
-                <button className="primary-button auth-submit" type="submit" disabled={working}>{working ? '?' : mode === 'register' ? t('register') : t('signIn')} <span>?</span></button>
-              </form>
-              <div className="auth-switch">{mode === 'register' ? t('already') : t('noAccount')} <button type="button" onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setError(''); }}>{mode === 'register' ? t('switchLogin') : t('switchRegister')}</button></div>
-              {!user && <div className="local-privacy"><span>i</span>{t('localNote')}</div>}
-            </section>
-          </div>}
-        </>
-      )}
-    </section>
   );
 }
