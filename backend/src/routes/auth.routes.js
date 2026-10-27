@@ -86,7 +86,7 @@ const workspaceInput = z.object({
     title: z.string().trim().min(1).max(100),
     categoryId: z.string().min(1).max(80), transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     transactionTime: z.string().regex(/^$|^(?:[01]\d|2[0-3]):[0-5]\d$/).optional().default(''),
-    note: z.string().max(500).default(''), noteImage: transactionImagePath.optional().default(''),
+    note: z.string().max(500).default(''), noteImage: z.union([z.literal(''), transactionImagePath]).optional().default(''),
     accountId: z.string().min(1).max(80).nullable().optional(), recurring: recurringInput.optional(),
     recurrenceSourceId: z.string().min(1).max(80).optional(), recurrenceMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional()
   }).strict()).max(10000),

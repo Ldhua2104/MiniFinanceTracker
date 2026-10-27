@@ -1508,7 +1508,9 @@ h2 {
     white-space: nowrap;
 }
 
-.account-switch-chevron { flex: 0 0 16px; }
+.account-switch-chevron {
+    flex: 0 0 16px;
+}
 
 .transaction-account-options {
     display: flex;
@@ -1624,6 +1626,36 @@ h2 {
     margin-bottom: 17px;
 }
 
+.activity-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 14px;
+    padding: 12px 16px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.activity-pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.activity-pagination-controls .secondary-button {
+    min-height: 36px;
+    padding: 6px 12px;
+}
+
+.activity-pagination-controls button:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+}
+
 .activity-month-strip {
     display: flex;
     overflow-x: auto;
@@ -1698,9 +1730,14 @@ h2 {
     display: none;
 }
 
-.activity-filters>summary .budget-expand-mark { margin-left: auto; }
+.activity-filters>summary .budget-expand-mark {
+    margin-left: auto;
+}
+
 .activity-filters[open]>summary .budget-expand-mark,
-.budget-expand-mark.is-open { transform: rotate(180deg); }
+.budget-expand-mark.is-open {
+    transform: rotate(180deg);
+}
 
 .activity-filter-count {
     display: inline-grid;
@@ -1947,7 +1984,11 @@ h2 {
     stroke-width: 2;
     transition: transform .18s ease;
 }
-.budget-card.expanded .budget-expand-mark, .income-source-card.expanded .budget-expand-mark { transform: rotate(180deg); }
+
+.budget-card.expanded .budget-expand-mark,
+.income-source-card.expanded .budget-expand-mark {
+    transform: rotate(180deg);
+}
 
 .budget-card-edit {
     flex: 0 0 auto;
@@ -2325,9 +2366,26 @@ h2 {
     font-variant-numeric: tabular-nums;
 }
 
-.income-source-count { display: grid; flex: 0 0 auto; align-self: end; justify-items: end; gap: 2px; text-align: right; }
-.income-source-count small { color: var(--muted); font-size: 10px; }
-.income-source-count strong { color: var(--income-source-accent, #557b63); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.income-source-count {
+    display: grid;
+    flex: 0 0 auto;
+    align-self: end;
+    justify-items: end;
+    gap: 2px;
+    text-align: right;
+}
+
+.income-source-count small {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.income-source-count strong {
+    color: var(--income-source-accent, #557b63);
+    font-size: 22px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
 
 .income-source-detail {
     display: grid;
@@ -2505,7 +2563,7 @@ h2 {
     gap: 11px;
 }
 
-.ai-step-heading > span {
+.ai-step-heading>span {
     display: grid;
     width: 26px;
     height: 26px;
@@ -2535,8 +2593,8 @@ h2 {
     grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1.2fr) minmax(0, 1.2fr) auto;
 }
 
-.ai-provider-form > .secondary-button,
-.ai-model-form > .secondary-button {
+.ai-provider-form>.secondary-button,
+.ai-model-form>.secondary-button {
     align-self: end;
     box-sizing: border-box;
     height: 38px;
@@ -2863,7 +2921,7 @@ h2 {
     font-size: 10px;
 }
 
-.ai-model-item > span {
+.ai-model-item>span {
     display: grid;
     gap: 3px;
 }
@@ -3001,7 +3059,9 @@ h2 {
 }
 
 @keyframes ai-test-spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .ai-test-button {
@@ -3026,13 +3086,24 @@ h2 {
 }
 
 @media (max-width: 640px) {
+
+    .activity-pagination {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .activity-pagination-controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+
     .ai-provider-form,
     .ai-model-form,
     .ai-model-edit-grid {
         grid-template-columns: 1fr;
     }
 
-    .ai-provider-form > .secondary-button {
+    .ai-provider-form>.secondary-button {
         width: 100%;
     }
 

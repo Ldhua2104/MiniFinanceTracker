@@ -8,6 +8,8 @@ import { incomeSourceLabel } from '../utils/income.js';
 export function ActivityPage({ items, allTransactions, categories, budgets, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
   const [filters, setFilters] = useState({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
   const monthDate = new Date(`${month}-01T12:00:00`);
   const monthOptions = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(monthDate);
@@ -66,6 +68,10 @@ export function ActivityPage({ items, allTransactions, categories, budgets, acco
     return true;
   });
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const pageItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(() => setCurrentPage(1), [month, filters]);
+  useEffect(() => setCurrentPage((page) => Math.min(page, totalPages)), [totalPages]);
 
   return (
     <section className="page-section activity-page">
@@ -102,17 +108,25 @@ export function ActivityPage({ items, allTransactions, categories, budgets, acco
         </div>
         {activeFilterCount > 0 && <button type="button" className="activity-filter-clear" onClick={() => setFilters({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' })}>{t('clearFilters')}</button>}
       </details>
-      <TransactionPanel items={filteredItems} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={activeFilterCount ? t('noMatchingTransactions') : t('empty')} />
+      <TransactionPanel items={pageItems} count={filteredItems.length} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fx.rates} onDelete={onDelete} onAdd={onAdd} onEdit={onEdit} emptyMessage={activeFilterCount ? t('noMatchingTransactions') : t('empty')} />
+      {totalPages > 1 && <nav className="activity-pagination" aria-label={t('pagination')}>
+        <span>{t('showingTransactions').replace('{start}', String((currentPage - 1) * pageSize + 1)).replace('{end}', String(Math.min(currentPage * pageSize, filteredItems.length))).replace('{total}', String(filteredItems.length))}</span>
+        <div className="activity-pagination-controls">
+          <button className="secondary-button" type="button" disabled={currentPage === 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>{t('previousPage')}</button>
+          <span>{t('pageOf').replace('{current}', String(currentPage)).replace('{total}', String(totalPages))}</span>
+          <button className="secondary-button" type="button" disabled={currentPage === totalPages} onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}>{t('nextPage')}</button>
+        </div>
+      </nav>}
     </section>
   );
 }
 
-export function TransactionPanel({ items, categories, accounts, t, language, timeFormat, reportCurrency, fxRates, onDelete, onAdd, onEdit, account, emptyMessage }) {
+export function TransactionPanel({ items, count = items.length, categories, accounts, t, language, timeFormat, reportCurrency, fxRates, onDelete, onAdd, onEdit, account, emptyMessage }) {
   return (
     <section className="panel transaction-panel">
       <div className="panel-heading">
         <div><div className="eyebrow">{t('activity')}</div><h2>{t('recent')}</h2></div>
-        <div className="panel-actions"><span className="count-pill">{items.length} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
+        <div className="panel-actions"><span className="count-pill">{count} {t('transactionsCount')}</span><button className="add-transaction-button" onClick={onAdd} aria-label={t('newTransaction')} title={t('newTransaction')}>+</button></div>
       </div>
       {items.length ? <TransactionList items={items} categories={categories} accounts={accounts} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} fxRates={fxRates} onDelete={onDelete} onEdit={onEdit} /> : <div className="empty-state"><span className="empty-icon">?</span><p>{emptyMessage || (account ? t('empty') : t('chooseAccountFirst'))}</p></div>}
     </section>
