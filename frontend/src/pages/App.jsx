@@ -29,6 +29,7 @@ export function App() {
   const [financeDataReady, setFinanceDataReady] = useState(false);
   const [migration, setMigration] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [rightEditor, setRightEditor] = useState(null);
   const [editingBudget, setEditingBudget] = useState(null);
@@ -77,6 +78,10 @@ export function App() {
   useEffect(() => saveLanguage(language), [language]);
 
   useEffect(() => localStorage.setItem('mini-finance.report-currency', reportCurrency), [reportCurrency]);
+
+  useEffect(() => {
+    if (rightEditor) setRightRailCollapsed(false);
+  }, [rightEditor]);
 
   useEffect(() => {
     if (page !== 'activity' && page !== 'budgets' && page !== 'income') return undefined;
@@ -212,6 +217,7 @@ export function App() {
   }
 
   function openAccountEditor(account = null) {
+    setRightRailCollapsed(false);
     setEditingAccount(account);
     setRightEditor('account');
   }
@@ -221,6 +227,7 @@ export function App() {
   }
 
   function openBudgetEditor(budget = null) {
+    setRightRailCollapsed(false);
     setEditingBudget(budget);
     setRightEditor('budget');
   }
@@ -256,6 +263,7 @@ export function App() {
   }
 
   function openIncomeSourceEditor(source = null) {
+    setRightRailCollapsed(false);
     setEditingIncomeSource(source);
     setRightEditor('income-source');
   }
@@ -300,6 +308,7 @@ export function App() {
   }
 
   function openTransactionEditor() {
+    setRightRailCollapsed(false);
     setEditingTransaction(null);
     setEditorLoadVersion((version) => version + 1);
     setNewTransactionTimestamp(localTransactionTimestamp());
@@ -307,6 +316,7 @@ export function App() {
   }
 
   function openTransactionForEdit(transaction) {
+    setRightRailCollapsed(false);
     setEditingTransaction(transaction);
     setNewTransactionTimestamp(null);
     setEditorLoadVersion((version) => version + 1);
@@ -351,7 +361,7 @@ export function App() {
         </div>
       </header>
 
-      <div className="layout-grid">
+      <div className={`layout-grid ${rightRailCollapsed ? 'right-rail-collapsed' : ''}`}>
         <aside className="left-rail">
           <div className="rail-label">{t('overviewHint')}</div>
           <nav className="primary-nav" aria-label={t('overview')}>
@@ -383,7 +393,14 @@ export function App() {
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
-        <aside className={`right-rail ${rightEditor ? 'editing' : ''}`}>
+        <aside className={`right-rail ${rightEditor ? 'editing' : ''} ${rightRailCollapsed ? 'collapsed' : ''}`}>
+          <div className="right-rail-toggle-row">
+            <button className="right-rail-toggle" type="button" aria-expanded={!rightRailCollapsed} aria-label={t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')} title={t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')} onClick={() => setRightRailCollapsed((collapsed) => !collapsed)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d={rightRailCollapsed ? 'm9 6 6 6-6 6' : 'm15 6-6 6 6 6'} /></svg>
+              <span className="sr-only">{t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')}</span>
+            </button>
+          </div>
+          <div className="right-rail-content">
           {rightEditor === 'account' ? (
             <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
           ) : rightEditor === 'budget' ? (
@@ -408,6 +425,7 @@ export function App() {
               {user && <div className={`sync-label ${saveStatus}`}>{saveLabel}</div>}
             </>
           )}
+          </div>
         </aside>
       </div>
 
