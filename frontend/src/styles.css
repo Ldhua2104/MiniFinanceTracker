@@ -1423,6 +1423,21 @@ h2 {
     color: #a53e37;
 }
 
+.account-editor .close-editor {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    z-index: 2;
+    width: 25px;
+    height: 25px;
+    color: #bf5148;
+}
+
+.account-editor .close-editor:hover {
+    background: #fde9e6;
+    color: #a53e37;
+}
+
 .editor-copy {
     margin: 0 0 20px;
     color: var(--muted);

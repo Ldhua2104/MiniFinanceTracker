@@ -43,13 +43,12 @@ export function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = 
   </section>;
 
   return (
-    <section className="panel side-editor">
-      <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t(editing ? 'editAccount' : 'addAccount')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
+    <section className="panel side-editor account-editor">
+      <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t(editing ? 'editAccount' : 'addAccount')}</h2></div><button className="icon-button close-editor" type="button" onClick={onCancel} aria-label={t('close')}>×</button></div>
       <p className="editor-copy">{t('accountSetupHint')}</p>
       <form onSubmit={submit}>
         {fields}
         <div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveAccount')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteAccount'))) onDelete(initialAccount.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l-1-13M10 11v5m4-5v5" /></svg><span>{t('deleteAccount')}</span></button>}</div>
-        <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
       </form>
     </section>
   );
