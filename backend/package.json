@@ -7,7 +7,6 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "db:indexes": "node src/db/initialize.js",
-    "db:migrate-workspaces": "node src/db/migrate-workspaces.js",
     "db:migrate-income-sources": "node src/db/migrate-income-sources.js",
     "db:seed": "node src/db/seed.js"
   },

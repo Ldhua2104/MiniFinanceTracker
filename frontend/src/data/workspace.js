@@ -27,7 +27,7 @@ export function saveAnonymousProfile(profile) {
 }
 
 export function emptyWorkspace() {
-  return { accounts: [], categories: [], transactions: [], budgets: [], revision: 0 };
+  return { accounts: [], categories: [], transactions: [], budgets: [] };
 }
 
 export function makeStarterWorkspace() {
@@ -43,7 +43,6 @@ export function makeStarterWorkspace() {
     ],
     transactions: [],
     budgets: [],
-    revision: 0
   };
 }
 
@@ -106,17 +105,16 @@ export function mergeWorkspaces(serverData, localData) {
     categories: mergeById(serverData.categories, localData.categories),
     transactions: mergeById(serverData.transactions, localData.transactions),
     budgets: mergeById(serverData.budgets, localData.budgets),
-    revision: serverData.revision ?? 0
   };
 }
 
-export async function loadServerWorkspace() {
-  const response = await apiRequest('/auth/workspace');
+export async function loadServerData() {
+  const response = await apiRequest('/auth/data');
   return ensureStarterCategories(response.data);
 }
 
-export async function saveServerWorkspace(workspace) {
-  const response = await apiRequest('/auth/workspace', {
+export async function saveServerData(workspace) {
+  const response = await apiRequest('/auth/data', {
     method: 'PUT',
     body: JSON.stringify({
       accounts: workspace.accounts ?? [],

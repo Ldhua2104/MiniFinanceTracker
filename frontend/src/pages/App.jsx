@@ -3,7 +3,7 @@ import { apiRequest } from '../api/client.js';
 import { convertCents, fetchLatestFxRates } from '../api/exchange-rates.js';
 import {
   clearAnonymousWorkspace, currencySymbol, emptyWorkspace, formatCents, hasWorkspaceData, loadAnonymousProfile, loadAnonymousWorkspace,
-  loadServerWorkspace, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerWorkspace
+  loadServerData, moneyToCents, saveAnonymousProfile, saveAnonymousWorkspace, saveServerData
 } from '../data/workspace.js';
 import { makeMonthlyRecurrence, materializeDueRecurringTransactions } from '../data/recurrence.js';
 import { emptyAiSettings, loadLocalAiSettings, migrateLocalAiSettings, saveLocalAiSettings } from '../data/ai-settings.js';
@@ -79,6 +79,7 @@ export function App() {
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [migration, setMigration] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [editingAccount, setEditingAccount] = useState(null);
   const [rightEditor, setRightEditor] = useState(null);
   const [editingBudget, setEditingBudget] = useState(null);
   const [editingIncomeSource, setEditingIncomeSource] = useState(null);
@@ -98,7 +99,7 @@ export function App() {
     let active = true;
     apiRequest('/auth/me')
       .then(async ({ data: account }) => {
-        const remote = await loadServerWorkspace();
+        const remote = await loadServerData();
         try { await migrateLocalAiSettings(apiRequest); } catch { /* Keep encrypted local AI settings when migration is unavailable. */ }
         if (!active) return;
         setUser(account);
@@ -159,7 +160,7 @@ export function App() {
     }
     const timer = setTimeout(() => {
       setSaveStatus('saving');
-      saveServerWorkspace(workspace)
+      saveServerData(workspace)
         .then(() => {
           setSaveStatus('saved');
         })
@@ -190,7 +191,7 @@ export function App() {
 
   async function onAuthenticated(account) {
     const local = role === 'anonymous' ? workspace : emptyWorkspace();
-    const remote = await loadServerWorkspace();
+    const remote = await loadServerData();
     try { await migrateLocalAiSettings(apiRequest); } catch { /* Keep encrypted local AI settings when migration is unavailable. */ }
     setUser(account);
     setRole(APP_ROLES.user);
@@ -207,12 +208,11 @@ export function App() {
   async function chooseMigration(choice) {
     if (!migration) return;
     const result = choice === 'merge'
-      ? await saveServerWorkspace({
+      ? await saveServerData({
           accounts: mergeById(migration.remote.accounts, migration.local.accounts),
           categories: mergeById(migration.remote.categories, migration.local.categories),
           transactions: mergeById(migration.remote.transactions, migration.local.transactions),
-          budgets: mergeById(migration.remote.budgets, migration.local.budgets),
-          revision: migration.remote.revision
+          budgets: mergeById(migration.remote.budgets, migration.local.budgets)
         })
       : migration.remote;
     if (choice === 'merge') clearAnonymousWorkspace();
@@ -247,7 +247,29 @@ export function App() {
   function addAccount(account) {
     setWorkspace((current) => ({ ...current, accounts: [...current.accounts, account] }));
     setSelectedAccountId(account.id);
+    setEditingAccount(null);
     setRightEditor(null);
+  }
+
+  function updateAccount(account) {
+    setWorkspace((current) => ({ ...current, accounts: current.accounts.map((item) => item.id === account.id ? account : item) }));
+    setRightEditor(null);
+    setEditingAccount(null);
+  }
+
+  function deleteAccount(id) {
+    setWorkspace((current) => ({
+      ...current,
+      accounts: current.accounts.filter((item) => item.id !== id),
+      transactions: current.transactions.filter((item) => item.accountId !== id)
+    }));
+    setRightEditor(null);
+    setEditingAccount(null);
+  }
+
+  function openAccountEditor(account = null) {
+    setEditingAccount(account);
+    setRightEditor('account');
   }
 
   function addTransactionAccount(account) {
@@ -423,14 +445,14 @@ export function App() {
 
               <section className="account-section" aria-label={t('accounts')}>
                 <div className="section-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t('accountOverview')}</h2></div>
-                  {workspace.accounts.length > 0 && <button className="add-account-link" onClick={() => setRightEditor('account')}><span>+</span>{t('addAccount')}</button>}
+                  {workspace.accounts.length > 0 && <button className="add-account-link" onClick={() => openAccountEditor()}><span>+</span>{t('addAccount')}</button>}
                 </div>
                 {workspace.accounts.length ? (
                   <div className="summary-grid account-scroller">
-                    {workspace.accounts.map((account) => <AccountCard key={account.id} account={account} selected={account.id === selectedAccountId} transactions={workspace.transactions} locale={language === 'zh' ? 'zh-CN' : 'en-US'} onSelect={() => setSelectedAccountId(account.id)} />)}
+                    {workspace.accounts.map((account) => <AccountCard key={account.id} account={account} selected={account.id === selectedAccountId} transactions={workspace.transactions} locale={language === 'zh' ? 'zh-CN' : 'en-US'} onSelect={() => { setSelectedAccountId(account.id); openAccountEditor(account); }} />)}
                   </div>
                 ) : (
-                  <div className="account-empty"><p>{t('noAccounts')}</p><button className="primary-button first-account-button" onClick={() => setRightEditor('account')}><span className="large-plus">+</span>{t('createFirstAccount')}</button></div>
+                  <div className="account-empty"><p>{t('noAccounts')}</p><button className="primary-button first-account-button" onClick={() => openAccountEditor()}><span className="large-plus">+</span>{t('createFirstAccount')}</button></div>
                 )}
               </section>
 
@@ -442,7 +464,7 @@ export function App() {
 
         <aside className={`right-rail ${rightEditor ? 'editing' : ''}`}>
           {rightEditor === 'account' ? (
-            <AccountForm t={t} onCancel={() => setRightEditor(null)} onSubmit={addAccount} />
+            <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
           ) : rightEditor === 'budget' ? (
             <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || workspace.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={workspace.categories} budgets={workspace.budgets} defaultCurrency={workspace.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
           ) : rightEditor === 'income-source' ? (
@@ -493,22 +515,25 @@ function AccountCard({ account, selected, transactions, locale, onSelect }) {
   );
 }
 
-function AccountForm({ t, onCancel, onSubmit, embedded = false }) {
-  const [currency, setCurrency] = useState('USD');
+function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = null, embedded = false }) {
+  const editing = Boolean(initialAccount);
+  const [currency, setCurrency] = useState(initialAccount?.currency ?? 'USD');
   const [error, setError] = useState('');
   function submit(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name')).trim();
-    const openingBalance = String(form.get('openingBalance')).trim() || '0.00';
-    if (!name || moneyToCents(openingBalance) === null) return setError(t('fieldRequired'));
+    const note = String(form.get('note') ?? '').trim();
+    const openingBalance = editing ? initialAccount.openingBalance : String(form.get('openingBalance')).trim() || '0.00';
+    if (!name || (!editing && moneyToCents(openingBalance) === null)) return setError(t('fieldRequired'));
     setError('');
-    onSubmit({ id: crypto.randomUUID(), name, currency, openingBalance: centsToAmount(moneyToCents(openingBalance)) });
+    onSubmit({ id: initialAccount?.id ?? crypto.randomUUID(), name, note, currency, openingBalance: editing ? openingBalance : centsToAmount(moneyToCents(openingBalance)) });
   }
   const fields = <>
-    <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" autoFocus={!embedded} required /></label>
-    <label className="field"><span>{t('openingBalance')}</span><div className="transaction-amount-input"><span>{currencySymbol(currency)}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></div></label>
+    <label className="field"><span>{t('accountName')}</span><input name="name" type="text" maxLength="60" defaultValue={initialAccount?.name ?? ''} autoFocus={!embedded} required /></label>
+    {!editing && <label className="field"><span>{t('openingBalance')}</span><div className="transaction-amount-input"><span>{currencySymbol(currency)}</span><input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></div></label>}
     <label className="field"><span>{t('currency')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label>
+    <label className="field"><span>{t('accountNote')}</span><textarea name="note" rows="3" maxLength="500" defaultValue={initialAccount?.note ?? ''} /></label>
     {error && <div className="inline-error">{error}</div>}
   </>;
 
@@ -519,11 +544,11 @@ function AccountForm({ t, onCancel, onSubmit, embedded = false }) {
 
   return (
     <section className="panel side-editor">
-      <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t('addAccount')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
+      <div className="editor-heading"><div><div className="eyebrow">{t('accounts')}</div><h2>{t(editing ? 'editAccount' : 'addAccount')}</h2></div><button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>?</button></div>
       <p className="editor-copy">{t('accountSetupHint')}</p>
       <form onSubmit={submit}>
         {fields}
-        <button className="primary-button" type="submit">{t('saveAccount')} <span>+</span></button>
+        <div className="transaction-form-actions"><button className="primary-button" type="submit">{t('saveAccount')}</button>{editing && <button className="delete-transaction-button" type="button" onClick={() => { if (window.confirm(t('confirmDeleteAccount'))) onDelete(initialAccount.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l-1-13M10 11v5m4-5v5" /></svg><span>{t('deleteAccount')}</span></button>}</div>
         <button className="text-button" type="button" onClick={onCancel}>{t('cancel')}</button>
       </form>
     </section>

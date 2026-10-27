@@ -60,7 +60,6 @@ async function migrate() {
     );
     await categories.deleteOne({ _id: oldCategory._id });
   }
-  await db.collection('workspaces').updateMany({ schemaVersion: { $lt: 3 } }, { $set: { schemaVersion: 3 } });
   console.log('Income source migration finished. Expense categories remain in categories.');
 }
 

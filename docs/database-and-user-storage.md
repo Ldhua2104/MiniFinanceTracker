@@ -7,10 +7,9 @@
 - `users` 只保存登录身份、安全状态和密码哈希。
 - `userprofiles` 保存用户名、头像文件路径、默认币种、时区和邮件提醒偏好。
 - `accounts`、`categories`、`incomeSources`、`budgets`、`transactions` 各自保存独立业务记录；每条记录包含 `userId` 和前端稳定的字符串 `id`。
-- `workspaces` 保留每个用户一条元数据记录，目前只负责 revision 与 schemaVersion。
 - 图片文件移出 MongoDB，服务器只保存其受保护的 API 路径。
 
-工作区 HTTP 接口仍接收和返回前端使用的完整快照。后端在读取时从多个集合组合响应，在保存时按用户及稳定 `id` 替换相应集合中的数据，并记录工作区 revision。匿名用户仍只在浏览器本地存储数据，不会创建服务器记录。
+认证数据接口接收和返回前端使用的完整记录快照。后端在读取时从多个集合组合响应，在保存时分别更新各业务集合。匿名用户仍只在浏览器本地存储数据，不会创建服务器记录。
 
 ## 每用户文件目录
 
@@ -34,61 +33,31 @@ backend/storage/users/{userId}/
 | --- | --- | --- |
 | `users` | 邮箱、密码哈希、角色、账户状态、会话版本、邮箱验证状态 | 邮箱唯一 |
 | `userprofiles` | 用户名、头像路径、默认币种、时区、邮件提醒偏好 | `userId` 唯一 |
-| `accounts` | 账户名称、币种、初始余额及展示顺序 | `userId + id` 唯一 |
+| `accounts` | 账户名称、备注、币种、初始余额及展示顺序 | `userId + id` 唯一 |
 | `categories` | 支出分类，含归档状态、颜色、展示顺序 | `userId + id` 唯一；同用户名称唯一 |
 | `incomesources` | 独立维护收入来源，例如工资、奖金、其他 | `userId + id` 唯一；同用户名称唯一 |
 | `budgets` | 月预算金额、币种、卡片颜色及其支出分类 | `userId + id` 唯一；同用户每个分类至多一个预算 |
 | `transactions` | 收支金额、类型、账户、分类、日期时间、备注、自动重复规则和图片路径 | `userId + id` 唯一；日期、分类、账户和重复任务查询索引 |
-| `workspaces` | 工作区同步 revision 与数据 schema 版本，不再承载业务数组 | `userId` 唯一 |
 | `aisettings` | 用户自带模型供应商、模型分配及经服务端加密的 API Key | `userId` 唯一；密钥不返回前端 |
 | `aianalyses` | AI 分析任务状态、分析月份、输入摘要与结果 | 用户、月份、数据 revision |
 | `notifications` | 预算提醒等用户通知及已读状态 | `userId`、预算关联 |
 | `emailjobs` | 邮件通知的排队状态、重试次数和幂等键 | 通知关联、幂等键唯一 |
 | `emailverifications` | 邮箱验证的哈希验证码、到期时间和尝试次数 | `userId`、到期时间 |
 
-业务金额继续以字符串形式保存（例如 `"200.00"`），避免本次拆分同时改变金额精度和 API 表达。账户、支出分类、收入来源、预算与交易内部仍有 MongoDB `_id`，接口使用由应用生成的字符串 `id` 关联记录，复合索引均带 `userId`，避免跨用户关联。前端仍通过工作区接口接收统一的 `categories` 数组；后端按 `type` 将收入记录存入 `incomesources`，支出记录存入 `categories`。
+业务金额继续以字符串形式保存（例如 `"200.00"`），避免本次拆分同时改变金额精度和 API 表达。账户、支出分类、收入来源、预算与交易内部仍有 MongoDB `_id`，接口使用由应用生成的字符串 `id` 关联记录，复合索引均带 `userId`，避免跨用户关联。前端通过 `/api/v1/auth/data` 接收统一的 `categories` 数组；后端按 `type` 将收入记录存入 `incomesources`，支出记录存入 `categories`。
 
-## 数据迁移
+## 当前运行方式
 
-当前数据库是 MongoDB，因此 SQL 脚本不适用。本仓库提供 Node/Mongoose 迁移程序：`backend/src/db/migrate-workspaces.js`。程序默认 dry-run，只检查引用、已有目标数据冲突、图片和头像格式并输出迁移计数，不写入数据库或文件。
+数据库已拆分为独立集合。账户、分类、收入来源、预算和收支记录分别直接保存在 `accounts`、`categories`、`incomesources`、`budgets` 和 `transactions` 集合中。认证后的数据接口为 `/api/v1/auth/data`，读取时组合各集合数据，写入时分别更新对应集合。
 
-建议先暂停后端服务和所有数据库写入，并备份数据库与 `backend/storage/transaction-images/`。先运行迁移预演，再更新集合校验器（旧版预算校验器仍要求 `month`），之后提交迁移并建立新索引：
+应用和数据库初始化流程不再依赖或创建 `workspaces` 集合。收入来源拆分迁移仅用于将旧 `categories` 集合中的收入来源移动到 `incomesources`；数据迁移完成后无需再运行旧的 workspace 迁移程序。
 
-```powershell
-cd backend
-npm run db:migrate-workspaces
-npm run db:indexes -- --validators-only
-npm run db:migrate-workspaces -- --commit
-npm run db:indexes
-```
+新增账户字段时，在 `backend/src/models/account.model.js`、`backend/src/routes/auth.routes.js` 和 `backend/src/db/initialize.js` 同步更新模型、接口校验和 MongoDB 校验器。运行 `cd backend; npm run db:indexes -- --validators-only` 可更新现有集合校验器。
 
-如果工作区已经迁移并清除了内嵌数组（`schemaVersion` 为 2），但收入来源仍在旧 `categories` 集合中，则运行专用迁移：
+MongoDB 校验器有账户备注字段后，应在 `backend` 目录执行：
 
 ```powershell
 npm run db:indexes -- --validators-only
-npm run db:migrate-income-sources
-npm run db:migrate-income-sources -- --commit
-npm run db:indexes
 ```
 
-该脚本只移动 `type: "income"` 的分类文档：先预演，提交时先写入 `incomesources`，再删除原文档；发生中断时可以重试。完成迁移后再启动新版后端，避免切换期间收入来源暂时无法显示。
-
-`db:indexes -- --validators-only` 只更新集合校验器，不会启动索引构建；最后的 `db:indexes` 再为拆分后的集合建立索引。后端关闭了启动时的自动建索引，以避免与迁移命令争用 MongoDB 索引构建。首次迁移后启动新版服务，检查用户资料、工作区 API、图片访问和每类记录数量。确认新集合数据完整后，可选择移除 `workspaces` 中的旧数组以及 `users` 中的旧资料字段：
-
-```powershell
-npm run db:migrate-workspaces -- --commit --strip-legacy
-```
-
-`--strip-legacy` 必须与 `--commit` 一起使用。脚本不会删除原交易图片文件；确认备份和运行状态稳定后，再按保留策略清理 `backend/storage/transaction-images/`。迁移过程中若目标集合已有不同内容，或旧数据引用缺失，程序会停止并报告冲突，不会静默覆盖。可重复运行未清理旧数组的迁移；目标数据必须与来源一致。`--strip-legacy` 应在确认迁移成功后作为最后一步执行。
-
-该迁移脚本只移动每个 workspace 当前的记录，不会把不同月份的历史预算合并成同分类的多个预算；如果旧集合中同一用户、同一分类存在多个预算，脚本会停止并报告。迁移前应先人工确定合并后的月预算金额。
-
-## 部署与回滚说明
-
-1. 备份 MongoDB 和服务器图片目录。
-2. 部署新后端代码后先运行 dry-run，解决所有报告的冲突。
-3. 使用 `--commit` 写入独立集合并复制图片，验证后端读取与图片权限。
-4. 确认无误后再使用 `--strip-legacy` 清理旧嵌入字段。
-5. 保留旧图片目录一段观察期；回滚时部署旧版代码并从数据库备份恢复旧 workspace 数据。
-
-工作区快照保存由多次集合写操作组成，不依赖 MongoDB replica set 事务，因此一次写入途中数据库故障可能留下部分更新。失败时应重新读取客户端当前工作区并重新保存；监控 `workspaces.revision` 与业务集合数据，必要时由备份恢复。
+保存操作会依次更新多个集合，不依赖 MongoDB replica set 事务。数据库故障若发生在写入途中，重新登录后可重新保存客户端记录；必要时从备份恢复。

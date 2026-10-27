@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { connectDatabase, disconnectDatabase } from './connect.js';
-import { User, UserProfile, Account, Category, IncomeSource, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification, Workspace } from '../models/index.js';
+import { User, UserProfile, Account, Category, IncomeSource, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification } from '../models/index.js';
 
 const definitions = [
   [User, { bsonType: 'object', required: ['email', 'passwordHash', 'role', 'status'], properties: {
@@ -13,6 +13,7 @@ const definitions = [
   } }],
   [Account, { bsonType: 'object', required: ['userId', 'id', 'name', 'currency', 'openingBalance'], properties: {
     userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 60 },
+    note: { bsonType: 'string', maxLength: 500 },
     currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, openingBalance: { bsonType: 'string', pattern: '^\\d{1,16}(?:\\.\\d{1,2})?$' }
   } }],
   [Category, { bsonType: 'object', required: ['userId', 'id', 'name', 'type'], properties: {
@@ -50,9 +51,6 @@ const definitions = [
   [EmailVerification, { bsonType: 'object', required: ['userId', 'codeHash', 'expiresAt', 'attempts'], properties: {
     userId: { bsonType: 'objectId' }, codeHash: { bsonType: 'string' }, expiresAt: { bsonType: 'date' }, attempts: { bsonType: 'int', minimum: 0, maximum: 5 }, consumedAt: { bsonType: ['date', 'null'] }
   } }],
-  [Workspace, { bsonType: 'object', required: ['userId'], properties: {
-    userId: { bsonType: 'objectId' }, revision: { bsonType: ['int', 'long'], minimum: 0 }, schemaVersion: { bsonType: ['int', 'long'], minimum: 1 }
-  } }]
 ];
 const validatorsOnly = process.argv.includes('--validators-only');
 const unknownOptions = process.argv.slice(2).filter((argument) => argument !== '--validators-only');

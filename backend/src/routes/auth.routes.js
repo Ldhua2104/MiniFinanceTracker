@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
-import { Account, AiSettings, Budget, Category, IncomeSource, Transaction, User, UserProfile, Workspace } from '../models/index.js';
+import { Account, AiSettings, Budget, Category, IncomeSource, Transaction, User, UserProfile } from '../models/index.js';
 import { MAX_IMAGE_BYTES, profileInput, registerInput } from '../domain/validation.js';
 import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
@@ -74,7 +74,7 @@ const aiSettingsInput = z.object({
 const workspaceInput = z.object({
   accounts: z.array(z.object({
     id: z.string().min(1).max(80), name: z.string().trim().min(1).max(60),
-    currency: z.enum(CURRENCIES), openingBalance: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/)
+    note: z.string().max(500).optional().default(''), currency: z.enum(CURRENCIES), openingBalance: z.string().regex(/^\d{1,16}(?:\.\d{1,2})?$/)
   }).strict()).max(100),
   categories: z.array(z.object({
     id: z.string().min(1).max(80), name: z.string().trim().min(1).max(50),
@@ -344,10 +344,9 @@ authRouter.post('/logout', requireCsrf, async (req, res, next) => {
   }
 });
 
-authRouter.get('/workspace', requireUser, async (req, res, next) => {
+authRouter.get('/data', requireUser, async (req, res, next) => {
   try {
-    const [workspace, accounts, expenseCategories, incomeSources, transactions, budgets] = await Promise.all([
-      Workspace.findOne({ userId: req.user._id }).lean(),
+    const [accounts, expenseCategories, incomeSources, transactions, budgets] = await Promise.all([
       Account.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean(),
       Category.find({ userId: req.user._id, type: 'expense' }).sort({ sortOrder: 1, _id: 1 }).select('-_id -archivedAt').lean(),
       IncomeSource.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -archivedAt').lean(),
@@ -359,7 +358,7 @@ authRouter.get('/workspace', requireUser, async (req, res, next) => {
       ...incomeSources.map(({ sortOrder, ...source }) => ({ ...source, type: 'income', sortOrder }))
     ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)).map(({ sortOrder, ...category }) => category);
     res.json({
-      data: { accounts, categories, transactions, budgets, revision: workspace?.revision || 0 },
+      data: { accounts, categories, transactions, budgets },
       meta: { requestId: req.requestId }
     });
   } catch (error) { next(error); }
@@ -378,7 +377,7 @@ async function replaceUserItems(Model, userId, items, scope = {}) {
   await Model.deleteMany({ ...scope, userId, ...(items.length ? { id: { $nin: items.map((item) => item.id) } } : {}) });
 }
 
-authRouter.put('/workspace', requireCsrf, requireUser, async (req, res, next) => {
+authRouter.put('/data', requireCsrf, requireUser, async (req, res, next) => {
   try {
     const data = workspaceInput.parse(req.body);
     await replaceUserItems(Account, req.user._id, data.accounts);
@@ -396,15 +395,10 @@ authRouter.put('/workspace', requireCsrf, requireUser, async (req, res, next) =>
     await replaceUserItems(IncomeSource, req.user._id, incomeSources);
     await replaceUserItems(Transaction, req.user._id, data.transactions);
     await replaceUserItems(Budget, req.user._id, data.budgets);
-    const workspace = await Workspace.findOneAndUpdate(
-      { userId: req.user._id },
-      { $inc: { revision: 1 }, $set: { schemaVersion: 3 } },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
-    ).lean();
-    res.json({ data: { ...data, revision: workspace.revision }, meta: { requestId: req.requestId } });
+    res.json({ data, meta: { requestId: req.requestId } });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Workspace data is invalid', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Finance data is invalid', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
     }
     next(error);
   }
