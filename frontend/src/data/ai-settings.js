@@ -6,7 +6,7 @@ const KEY_STORE = 'crypto-keys';
 export const emptyAiSettings = () => ({
   providers: [],
   models: [],
-  assignments: { receipt: '', conversation: '', tools: '' }
+  assignments: { receipt: '', conversation: '' }
 });
 
 function openKeyDatabase() {
@@ -97,7 +97,7 @@ export async function migrateLocalAiSettings(apiRequest) {
   }
   const response = await apiRequest('/auth/ai-settings/migrate', {
     method: 'POST',
-    body: JSON.stringify({ ...local.settings, providers: local.settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: local.apiKeys })
+    body: JSON.stringify({ ...local.settings, assignments: { receipt: local.settings.assignments?.receipt || '', conversation: local.settings.assignments?.conversation || '' }, providers: local.settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint })), apiKeys: local.apiKeys })
   });
   await clearLocalAiSettings();
   return response.data;

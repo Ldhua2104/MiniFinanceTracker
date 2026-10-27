@@ -2513,9 +2513,12 @@ h2 {
     grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1.2fr) minmax(0, 1.2fr) auto;
 }
 
-.ai-provider-form > .secondary-button {
-    min-height: 38px;
+.ai-provider-form > .secondary-button,
+.ai-model-form > .secondary-button {
     align-self: end;
+    box-sizing: border-box;
+    height: 38px;
+    min-height: 38px;
     white-space: nowrap;
 }
 
@@ -2548,6 +2551,7 @@ h2 {
 .ai-provider-item .field {
     display: grid;
     gap: 6px;
+    margin: 0;
     color: var(--muted);
     font-size: 10px;
 }
@@ -2568,11 +2572,6 @@ h2 {
     color: var(--text);
     font: inherit;
     font-size: 11px;
-}
-
-.ai-model-form .secondary-button {
-    min-height: 38px;
-    white-space: nowrap;
 }
 
 .ai-model-control .secondary-button {
@@ -2599,6 +2598,85 @@ h2 {
     border: 1px solid var(--line);
     border-radius: 12px;
     background: var(--surface-soft);
+}
+
+.ai-model-item.is-editing {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding-top: 16px;
+    width: 100%;
+}
+
+.ai-model-item.is-editing .ai-provider-title {
+    min-height: 25px;
+    padding-right: 32px;
+}
+
+.ai-model-item.is-editing .ai-provider-close {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    z-index: 1;
+    width: 25px;
+    height: 25px;
+    flex: 0 0 25px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #bf5148;
+    font-size: 19px;
+    line-height: 1;
+}
+
+.ai-model-item.is-editing .ai-provider-close:hover {
+    background: #fde9e6;
+    color: #a53e37;
+}
+
+.ai-model-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ai-model-edit-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    width: 100%;
+}
+
+.ai-model-item.is-editing .ai-provider-edit-actions {
+    width: 100%;
+    justify-content: flex-end;
+}
+
+.ai-model-edit-grid .field {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.ai-model-edit-grid input,
+.ai-model-edit-grid select {
+    min-width: 0;
+    width: 100%;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+}
+
+.ai-model-edit-grid input:focus,
+.ai-model-edit-grid select:focus {
+    border-color: var(--accent);
 }
 
 .ai-provider-item:not(.is-editing) {
@@ -2819,6 +2897,17 @@ h2 {
     display: grid;
 }
 
+.ai-task-test-area {
+    position: relative;
+    border-radius: 12px;
+}
+
+.ai-task-test-area.is-testing .ai-task-list {
+    filter: blur(2px);
+    pointer-events: none;
+    user-select: none;
+}
+
 .ai-task-row {
     display: flex;
     align-items: center;
@@ -2827,6 +2916,81 @@ h2 {
     padding: 11px 0;
     border-top: 1px solid var(--line);
     font-size: 11px;
+}
+
+.ai-task-name {
+    display: grid;
+    gap: 4px;
+}
+
+.ai-task-test-result {
+    font-size: 10px;
+}
+
+.ai-task-test-result.success {
+    color: var(--positive);
+}
+
+.ai-task-test-result.error {
+    color: #b95349;
+}
+
+.ai-task-test-hint {
+    margin: 12px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.ai-task-test-overlay {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 66%, transparent);
+    color: var(--accent-dark);
+    text-align: center;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.ai-task-test-overlay strong {
+    font-size: 12px;
+}
+
+.ai-task-test-overlay small {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.ai-test-spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid color-mix(in srgb, var(--accent) 24%, transparent);
+    border-top-color: var(--accent-dark);
+    border-radius: 50%;
+    animation: ai-test-spin .8s linear infinite;
+}
+
+@keyframes ai-test-spin {
+    to { transform: rotate(360deg); }
+}
+
+.ai-test-button {
+    min-height: 40px;
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+    color: var(--accent-dark);
+}
+
+.ai-test-button:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
 }
 
 .ai-task-row select {
@@ -2841,7 +3005,8 @@ h2 {
 
 @media (max-width: 640px) {
     .ai-provider-form,
-    .ai-model-form {
+    .ai-model-form,
+    .ai-model-edit-grid {
         grid-template-columns: 1fr;
     }
 

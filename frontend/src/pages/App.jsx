@@ -1371,11 +1371,115 @@ function PlaceholderPage({ title, detail }) {
   return <section className="page-section"><PageTitle title={title} detail={detail} /><div className="panel placeholder-panel"><span className="empty-icon">?</span><p>{detail}</p></div></section>;
 }
 
+const AI_TEST_ERROR_KEYS = {
+  AI_TEST_KEY_MISSING: 'aiTestKeyMissing',
+  AI_TEST_ASSIGNMENT_MISSING: 'aiTestAssignmentMissing',
+  AI_TEST_MODEL_NOT_FOUND: 'aiTestModelNotFound',
+  AI_TEST_PROVIDER_NOT_FOUND: 'aiTestProviderNotFound',
+  AI_TEST_ENDPOINT_INVALID: 'aiTestEndpointInvalid',
+  AI_TEST_INSECURE_ENDPOINT: 'aiTestInsecureEndpoint',
+  AI_TEST_ENDPOINT_BLOCKED: 'aiTestEndpointBlocked',
+  AI_TEST_AUTH_FAILED: 'aiTestAuthFailed',
+  AI_TEST_MODEL_OR_ENDPOINT_NOT_FOUND: 'aiTestModelOrEndpointNotFound',
+  AI_TEST_RATE_LIMITED: 'aiTestRateLimited',
+  AI_TEST_TIMEOUT: 'aiTestTimeout',
+  AI_TEST_PROVIDER_UNAVAILABLE: 'aiTestProviderUnavailable',
+  AI_TEST_NETWORK: 'aiTestNetwork',
+  AI_TEST_DNS_FAILED: 'aiTestNetwork',
+  AI_TEST_REQUEST_REJECTED: 'aiTestRequestRejected',
+  AI_TEST_REDIRECT_UNSUPPORTED: 'aiTestRedirectUnsupported',
+  AI_TEST_INVALID_RESPONSE: 'aiTestInvalidResponse',
+  AI_TEST_RESPONSE_TOO_LARGE: 'aiTestInvalidResponse',
+  AI_TEST_REQUEST_FAILED: 'aiTestRequestFailed',
+  AI_TEST_INVALID_TASK: 'aiTestRequestFailed',
+  AI_TEST_SAVE_FAILED: 'aiTestSaveFailed',
+  AI_TEST_SESSION_EXPIRED: 'aiTestSessionExpired',
+  AI_ENCRYPTION_NOT_CONFIGURED: 'aiTestServerConfiguration',
+  AI_ENCRYPTION_KEY_VERSION_UNSUPPORTED: 'aiTestServerConfiguration'
+};
+const AI_TEST_RETRYABLE_CODES = new Set(['AI_TEST_RATE_LIMITED', 'AI_TEST_TIMEOUT', 'AI_TEST_PROVIDER_UNAVAILABLE', 'AI_TEST_NETWORK', 'AI_TEST_DNS_FAILED']);
+
+function aiProbeRequest(provider, model) {
+  let endpoint;
+  try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' });
+  if (endpoint.protocol !== 'https:') throw Object.assign(new Error(), { code: 'AI_TEST_INSECURE_ENDPOINT' });
+  const basePath = endpoint.pathname.replace(/\/+$/, '');
+  const headers = { 'content-type': 'application/json', accept: 'application/json' };
+  let url;
+  let body;
+  if (provider.type === 'anthropic') {
+    url = new URL(`${basePath.endsWith('/messages') ? basePath : `${basePath}/messages`}${endpoint.search}`, endpoint.origin);
+    headers['anthropic-version'] = '2023-06-01';
+    body = { model: model.name, max_tokens: 8, messages: [{ role: 'user', content: 'Reply with exactly OK.' }] };
+  } else if (provider.type === 'gemini') {
+    const path = basePath.includes(':generateContent') ? basePath : `${basePath}/models/${encodeURIComponent(model.name)}:generateContent`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    body = { contents: [{ parts: [{ text: 'Reply with exactly OK.' }] }], generationConfig: { maxOutputTokens: 8 } };
+  } else {
+    const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers.authorization = 'Bearer';
+    body = { model: model.name, messages: [{ role: 'user', content: 'Reply with exactly OK.' }], max_tokens: 8, stream: false };
+  }
+  return { url, headers, body };
+}
+
+function normalizeAiSettings(settings) {
+  const empty = emptyAiSettings();
+  return {
+    ...empty,
+    ...settings,
+    assignments: { receipt: settings?.assignments?.receipt || '', conversation: settings?.assignments?.conversation || '' }
+  };
+}
+
+async function probeAiModelInBrowser(provider, model, apiKey) {
+  if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
+  const { url, headers, body } = aiProbeRequest(provider, model);
+  if (provider.type === 'gemini') headers['x-goog-api-key'] = apiKey.trim();
+  else if (provider.type === 'anthropic') headers['x-api-key'] = apiKey.trim();
+  else headers.authorization = `Bearer ${apiKey.trim()}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+  let response;
+  try {
+    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+  } catch (error) {
+    throw Object.assign(new Error(), { code: error.name === 'AbortError' ? 'AI_TEST_TIMEOUT' : 'AI_TEST_NETWORK' });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+  if (!response.ok) {
+    const status = response.status;
+    const code = status === 401 || status === 403 ? 'AI_TEST_AUTH_FAILED'
+      : status === 404 ? 'AI_TEST_MODEL_OR_ENDPOINT_NOT_FOUND'
+        : status === 429 ? 'AI_TEST_RATE_LIMITED'
+          : status >= 500 ? 'AI_TEST_PROVIDER_UNAVAILABLE'
+            : status >= 300 ? 'AI_TEST_REDIRECT_UNSUPPORTED'
+              : status === 400 || status === 422 ? 'AI_TEST_REQUEST_REJECTED' : 'AI_TEST_REQUEST_FAILED';
+    throw Object.assign(new Error(), { code });
+  }
+  let payload;
+  try { payload = await response.json(); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' }); }
+  const hasText = provider.type === 'anthropic'
+    ? payload.content?.some((part) => typeof part.text === 'string')
+    : provider.type === 'gemini'
+      ? payload.candidates?.some((candidate) => candidate.content?.parts?.some((part) => typeof part.text === 'string'))
+      : typeof payload.choices?.[0]?.message?.content === 'string';
+  if (!hasText) throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' });
+}
+
 function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat, user }) {
   const [migrationNotice, setMigrationNotice] = useState(false);
   const [aiConfig, setAiConfig] = useState(emptyAiSettings);
   const [providerDraft, setProviderDraft] = useState({ type: 'openai', endpoint: '', apiKey: '' });
   const [modelDraft, setModelDraft] = useState({ providerId: '', name: '', customName: '' });
+  const [editingModelId, setEditingModelId] = useState(null);
+  const [editingModelDraft, setEditingModelDraft] = useState({ providerId: '', name: '', customName: '' });
+  const [isTestingAiTasks, setIsTestingAiTasks] = useState(false);
+  const [aiTaskTestProgress, setAiTaskTestProgress] = useState(null);
+  const [aiTaskTestResults, setAiTaskTestResults] = useState({});
   const [providerKeys, setProviderKeys] = useState({});
   const [showKeys, setShowKeys] = useState({});
   const [showProviderDraftKey, setShowProviderDraftKey] = useState(false);
@@ -1394,12 +1498,12 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
           let response = await migrateLocalAiSettings(apiRequest);
           if (!response) response = (await apiRequest('/auth/ai-settings')).data;
           if (!active) return;
-          setAiConfig(response);
+          setAiConfig(normalizeAiSettings(response));
           setProviderKeys({});
         } else {
           const local = await loadLocalAiSettings();
           if (!active) return;
-          setAiConfig(local.settings);
+          setAiConfig(normalizeAiSettings(local.settings));
           setProviderKeys(local.apiKeys);
         }
       } catch {
@@ -1407,12 +1511,12 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
         try {
           const local = await loadLocalAiSettings();
           if (!active) return;
-          setAiConfig(local.settings);
+          setAiConfig(normalizeAiSettings(local.settings));
           setProviderKeys(local.apiKeys);
           setAiSaveStatus(t('aiMigrationPending'));
         } catch {
           const empty = emptyAiSettings();
-          setAiConfig(empty);
+          setAiConfig(normalizeAiSettings(empty));
           setProviderKeys({});
           setAiSaveStatus(t('aiSettingsUnavailable'));
         }
@@ -1501,6 +1605,27 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
     const nextConfig = { ...aiConfig, models: [...aiConfig.models, model] };
     if (await saveAiSettingsNow(nextConfig, providerKeys)) setModelDraft((current) => ({ ...current, name: '', customName: '' }));
   };
+  const beginModelEdit = (model) => {
+    setEditingModelId(model.id);
+    setEditingModelDraft({ providerId: model.providerId, name: model.name, customName: model.customName || model.name });
+  };
+  const closeModelEdit = () => {
+    setEditingModelId(null);
+    setEditingModelDraft({ providerId: '', name: '', customName: '' });
+  };
+  const finishModelEdit = async (modelIdToEdit) => {
+    if (!editingModelDraft.providerId || !editingModelDraft.name.trim() || !editingModelDraft.customName.trim()) return;
+    const nextConfig = {
+      ...aiConfig,
+      models: aiConfig.models.map((model) => model.id === modelIdToEdit ? {
+        ...model,
+        providerId: editingModelDraft.providerId,
+        name: editingModelDraft.name.trim(),
+        customName: editingModelDraft.customName.trim()
+      } : model)
+    };
+    if (await saveAiSettingsNow(nextConfig, providerKeys)) closeModelEdit();
+  };
   const removeProvider = async (providerId) => {
     if (!window.confirm(t('confirmDeleteAiProvider'))) return;
     const models = aiConfig.models.filter((model) => model.providerId !== providerId);
@@ -1529,7 +1654,7 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
       models: aiConfig.models.filter((model) => model.id !== modelIdToRemove),
       assignments: Object.fromEntries(Object.entries(aiConfig.assignments).map(([task, assigned]) => [task, assigned === modelIdToRemove ? '' : assigned]))
     };
-    await saveAiSettingsNow(nextConfig, providerKeys);
+    if (await saveAiSettingsNow(nextConfig, providerKeys) && editingModelId === modelIdToRemove) closeModelEdit();
   };
   async function saveAiSettingsNow(config = aiConfig, keys = providerKeys) {
     setAiSaveStatus(t('aiSaving'));
@@ -1539,7 +1664,7 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
     config = {
       ...config,
       models: validModels,
-      assignments: Object.fromEntries(Object.entries(config.assignments).map(([task, assigned]) => [task, validModelIds.has(assigned) ? assigned : '']))
+      assignments: Object.fromEntries(['receipt', 'conversation'].map((task) => [task, validModelIds.has(config.assignments?.[task]) ? config.assignments[task] : '']))
     };
     const providerIds = new Set(config.providers.map((provider) => provider.id));
     const effectiveKeys = Object.fromEntries(Object.entries(keys).filter(([providerId, value]) => providerIds.has(providerId) && value.trim()));
@@ -1574,6 +1699,60 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
       return false;
     }
   }
+
+  const testAssignedAiTasks = async () => {
+    const tasks = ['receipt', 'conversation'].filter((task) => aiConfig.assignments?.[task]);
+    if (!tasks.length) {
+      setAiTaskTestResults({});
+      setAiSaveStatus(t('aiTestNoAssignedTasks'));
+      return;
+    }
+    const configToTest = normalizeAiSettings(aiConfig);
+    const keysToTest = { ...providerKeys };
+    setAiTaskTestResults({});
+    setIsTestingAiTasks(true);
+    try {
+      if (!await saveAiSettingsNow(configToTest, keysToTest)) {
+        setAiTaskTestResults(Object.fromEntries(tasks.map((task) => [task, { status: 'error', code: 'AI_TEST_SAVE_FAILED', attempts: 0 }])));
+        return;
+      }
+      for (const task of tasks) {
+        let finalCode = 'AI_TEST_REQUEST_FAILED';
+        let succeeded = false;
+        let attemptsMade = 0;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          attemptsMade = attempt;
+          setAiTaskTestProgress({ task, attempt });
+          try {
+            if (user) {
+              await apiRequest('/auth/ai-settings/test', { method: 'POST', body: JSON.stringify({ task }) });
+            } else {
+              const model = configToTest.models.find((item) => item.id === configToTest.assignments[task]);
+              const provider = configToTest.providers.find((item) => item.id === model?.providerId);
+              if (!model) throw Object.assign(new Error(), { code: 'AI_TEST_MODEL_NOT_FOUND' });
+              if (!provider) throw Object.assign(new Error(), { code: 'AI_TEST_PROVIDER_NOT_FOUND' });
+              await probeAiModelInBrowser(provider, model, keysToTest[provider.id]);
+            }
+            succeeded = true;
+            setAiTaskTestResults((current) => ({ ...current, [task]: { status: 'success', attempts: attempt } }));
+            break;
+          } catch (error) {
+            finalCode = AI_TEST_ERROR_KEYS[error.code] ? error.code : (error.code === 'UNAUTHENTICATED' ? 'AI_TEST_SESSION_EXPIRED' : 'AI_TEST_REQUEST_FAILED');
+            if (!AI_TEST_RETRYABLE_CODES.has(finalCode) || attempt === 3) break;
+            await new Promise((resolve) => window.setTimeout(resolve, 500 * attempt));
+          }
+        }
+        if (!succeeded) {
+          setAiTaskTestResults((current) => ({ ...current, [task]: { status: 'error', code: finalCode, attempts: attemptsMade } }));
+        }
+      }
+    } finally {
+      setIsTestingAiTasks(false);
+      setAiTaskTestProgress(null);
+    }
+  };
+  const aiTaskDefinitions = [['receipt', 'aiTaskReceipts'], ['conversation', 'aiTaskConversation']];
+  const assignedAiTaskCount = aiTaskDefinitions.filter(([task]) => aiConfig.assignments?.[task]).length;
 
   return <section className="page-section"><PageTitle title={t('settings')} detail={t('settingsHint')} />
     <div className="panel settings-panel">
@@ -1619,16 +1798,37 @@ function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, s
         </form>
         {aiConfig.models.length > 0 && <div className="ai-model-list">{aiConfig.models.map((model) => {
           const provider = aiConfig.providers.find((item) => item.id === model.providerId);
-          return <div className="ai-model-item" key={model.id}><span><strong>{model.customName || model.name}</strong><small>{model.name} · {providerNames[provider?.type] || provider?.type}</small></span><button className="ai-remove-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>;
-        })}</div>}
-      </article>
+          const isEditing = editingModelId === model.id;
+          return <div className={`ai-model-item ${isEditing ? 'is-editing' : ''}`} key={model.id}>
+            {!isEditing ? <>
+              <span><strong>{model.customName || model.name}</strong><small>{model.name} · {providerNames[provider?.type] || provider?.type}</small></span>
+              <div className="ai-model-actions"><button className="ai-provider-edit-icon" type="button" aria-label={t('aiEditModel')} title={t('aiEditModel')} onClick={() => beginModelEdit(model)}>✎</button><button className="ai-remove-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>
+            </> : <>
+              <div className="ai-provider-title"><strong>{model.customName || model.name}</strong><button className="icon-button close-editor ai-provider-close" type="button" aria-label={t('close')} title={t('close')} onClick={closeModelEdit}>×</button></div>
+              <div className="ai-model-edit-grid">
+                <label className="field"><span>{t('aiProvider')}</span><select value={editingModelDraft.providerId} onChange={(event) => setEditingModelDraft((current) => ({ ...current, providerId: event.target.value }))}><option value="">{t('aiChooseProvider')}</option>{aiConfig.providers.map((item) => <option key={item.id} value={item.id}>{providerNames[item.type] || item.type}</option>)}</select></label>
+                <label className="field"><span>{t('aiModelName')}</span><input value={editingModelDraft.name} onChange={(event) => setEditingModelDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+                <label className="field"><span>{t('aiModelCustomName')}</span><input value={editingModelDraft.customName} onChange={(event) => setEditingModelDraft((current) => ({ ...current, customName: event.target.value }))} /></label>
+              </div>
+              <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" disabled={!editingModelDraft.providerId || !editingModelDraft.name.trim() || !editingModelDraft.customName.trim()} onClick={() => finishModelEdit(model.id)}>{t('aiSaveChanges')}</button><button className="ai-provider-delete-button" type="button" onClick={() => removeModel(model.id)}>{t('delete')}</button></div>
+            </>}
+          </div>;
+        })}</div>}      </article>
 
       <article className="panel ai-config-card">
         <div className="ai-step-heading"><span>3</span><div><h3>{t('aiTaskAssignments')}</h3><p>{t('aiTaskHint')}</p></div></div>
-        <div className="ai-task-list">{[
-          ['receipt', 'aiTaskReceipts'], ['conversation', 'aiTaskConversation'], ['tools', 'aiTaskTools']
-        ].map(([task, label]) => <label className="ai-task-row" key={task}><span>{t(label)}</span><select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length} onChange={(event) => setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } }))}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.customName || model.name}</option>)}</select></label>)}</div>
-        <div className="ai-provider-edit-actions"><button className="ai-provider-save-button" type="button" onClick={() => saveAiSettingsNow()}>{t('aiSaveChanges')}</button></div>
+        <div className={`ai-task-test-area ${isTestingAiTasks ? 'is-testing' : ''}`}>
+          <div className="ai-task-list">{aiTaskDefinitions.map(([task, label]) => {
+            const result = aiTaskTestResults[task];
+            return <label className="ai-task-row" key={task}>
+              <span className="ai-task-name"><span>{t(label)}</span>{result && <small className={`ai-task-test-result ${result.status}`}>{result.status === 'success' ? t('aiTestSuccess') : t(AI_TEST_ERROR_KEYS[result.code] || 'aiTestRequestFailed')}</small>}</span>
+              <select value={aiConfig.assignments[task] || ''} disabled={!aiConfig.models.length || isTestingAiTasks} onChange={(event) => { setAiConfig((current) => ({ ...current, assignments: { ...current.assignments, [task]: event.target.value } })); setAiTaskTestResults((current) => ({ ...current, [task]: undefined })); }}><option value="">{t('aiUnassigned')}</option>{aiConfig.models.map((model) => <option key={model.id} value={model.id}>{model.customName || model.name}</option>)}</select>
+            </label>;
+          })}</div>
+          {isTestingAiTasks && <div className="ai-task-test-overlay" role="status" aria-live="polite"><span className="ai-test-spinner" aria-hidden="true" /><strong>{t('aiTestRunning')}</strong><small>{aiTaskTestProgress ? `${t(aiTaskTestProgress.task === 'receipt' ? 'aiTaskReceipts' : 'aiTaskConversation')} · ${t('aiTestAttempt')} ${aiTaskTestProgress.attempt}/3` : t('aiTestPreparing')}</small></div>}
+        </div>
+        <p className="ai-task-test-hint">{t('aiTaskTestHint')}</p>
+        <div className="ai-provider-edit-actions"><button className="secondary-button ai-test-button" type="button" disabled={isTestingAiTasks || !assignedAiTaskCount} onClick={testAssignedAiTasks}>{isTestingAiTasks ? t('aiTestRunning') : t('aiTestAssignedTasks')}</button><button className="ai-provider-save-button" type="button" disabled={isTestingAiTasks} onClick={() => saveAiSettingsNow()}>{t('aiSaveChanges')}</button></div>
       </article>
     </section>
     <article className="panel migration-option-card">

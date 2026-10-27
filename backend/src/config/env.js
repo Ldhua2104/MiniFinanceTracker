@@ -1,7 +1,31 @@
 import dotenv from 'dotenv';
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-dotenv.config();
+// Load workspace-local settings first, then the repository root as a fallback.
+// npm workspace scripts run with `backend/` as cwd, while local development
+// configuration is commonly kept in the repository root `.env`.
+const envPaths = new Set([
+  path.resolve(process.cwd(), '.env'),
+  fileURLToPath(new URL('../../../.env', import.meta.url))
+]);
+const serverEnvNames = new Set([
+  'NODE_ENV', 'PORT', 'MONGODB_URI', 'APP_ORIGIN', 'JWT_SECRET', 'FRANKFURTER_BASE_URL',
+  'AI_CREDENTIALS_ENCRYPTION_KEY', 'RESEND_API_KEY', 'EMAIL_FROM', 'ADMIN_EMAIL', 'ADMIN_PASSWORD'
+]);
+for (const envPath of envPaths) {
+  try {
+    const fileValues = dotenv.parse(readFileSync(envPath));
+    for (const [name, value] of Object.entries(fileValues)) {
+      // Provider API keys are intentionally excluded; requests use per-user saved credentials.
+      if (serverEnvNames.has(name) && process.env[name] === undefined) process.env[name] = value;
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -10,9 +34,8 @@ const envSchema = z.object({
   APP_ORIGIN: z.string().url().default('http://localhost:5173'),
   JWT_SECRET: z.string().default('development-only-change-this-secret'),
   FRANKFURTER_BASE_URL: z.string().url().default('https://api.frankfurter.dev/v2'),
-  DEEPSEEK_BASE_URL: z.string().url().default('https://api.deepseek.com'),
-  DEEPSEEK_API_KEY: z.string().optional().default(''),
-  DEEPSEEK_MODEL: z.string().optional().default(''),
+  // This is only the server-side at-rest encryption key. Provider API keys
+  // come from each user's saved AI settings and are never read from env vars.
   AI_CREDENTIALS_ENCRYPTION_KEY: z.string().optional().default('').refine((value) => {
     if (!value) return true;
     const decoded = Buffer.from(value, 'base64');

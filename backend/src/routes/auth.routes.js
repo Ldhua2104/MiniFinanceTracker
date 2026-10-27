@@ -12,6 +12,7 @@ import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
 import { decryptAiSettings, encryptAiSettings } from '../services/ai-settings-crypto.js';
+import { isAiProbeRetryable, probeAiModel } from '../services/ai-probe.js';
 
 export const authRouter = Router();
 const transactionImageRoot = fileURLToPath(new URL('../../storage/transaction-images/', import.meta.url));
@@ -48,8 +49,7 @@ const aiSettingsInput = z.object({
   }).strict()).max(100),
   assignments: z.object({
     receipt: z.string().max(80).default(''),
-    conversation: z.string().max(80).default(''),
-    tools: z.string().max(80).default('')
+    conversation: z.string().max(80).default('')
   }).strict(),
   apiKeys: z.record(z.string().max(80), z.string().max(4096)).default({}),
   clearApiKeys: z.array(z.string().max(80)).max(20).default([])
@@ -300,13 +300,13 @@ authRouter.put('/workspace', requireCsrf, requireUser, async (req, res, next) =>
   }
 });
 
-const emptyAiSettings = () => ({ providers: [], models: [], assignments: { receipt: '', conversation: '', tools: '' }, apiKeys: {} });
+const emptyAiSettings = () => ({ providers: [], models: [], assignments: { receipt: '', conversation: '' }, apiKeys: {} });
 
 function publicAiSettings(settings) {
   return {
     providers: settings.providers.map(({ id, type, endpoint }) => ({ id, type, endpoint, hasApiKey: Boolean(settings.apiKeys[id]) })),
     models: settings.models,
-    assignments: settings.assignments
+    assignments: { receipt: settings.assignments.receipt || '', conversation: settings.assignments.conversation || '' }
   };
 }
 
@@ -353,6 +353,50 @@ authRouter.get('/ai-settings', requireUser, async (req, res, next) => {
   } catch (error) { sendAiSettingsError(error, req, res, next); }
 });
 
+const aiTaskProbeInput = z.object({ task: z.enum(['receipt', 'conversation']) }).strict();
+const aiProbeErrorStatus = {
+  AI_TEST_KEY_MISSING: 400,
+  AI_TEST_ASSIGNMENT_MISSING: 400,
+  AI_TEST_MODEL_NOT_FOUND: 400,
+  AI_TEST_PROVIDER_NOT_FOUND: 400,
+  AI_TEST_ENDPOINT_INVALID: 400,
+  AI_TEST_INSECURE_ENDPOINT: 400,
+  AI_TEST_ENDPOINT_BLOCKED: 400,
+  AI_TEST_AUTH_FAILED: 401,
+  AI_TEST_MODEL_OR_ENDPOINT_NOT_FOUND: 404,
+  AI_TEST_RATE_LIMITED: 429,
+  AI_TEST_TIMEOUT: 504,
+  AI_TEST_PROVIDER_UNAVAILABLE: 502,
+  AI_TEST_NETWORK: 502,
+  AI_TEST_DNS_FAILED: 502,
+  AI_TEST_REQUEST_REJECTED: 422,
+  AI_TEST_REDIRECT_UNSUPPORTED: 422,
+  AI_TEST_INVALID_RESPONSE: 502,
+  AI_TEST_RESPONSE_TOO_LARGE: 502,
+  AI_TEST_REQUEST_FAILED: 502
+};
+
+authRouter.post('/ai-settings/test', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const parsed = aiTaskProbeInput.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'AI_TEST_INVALID_TASK' }, meta: { requestId: req.requestId } });
+    const settings = await readAiSettings(req.user._id);
+    const modelId = settings.assignments?.[parsed.data.task];
+    if (!modelId) return res.status(400).json({ error: { code: 'AI_TEST_ASSIGNMENT_MISSING' }, meta: { requestId: req.requestId } });
+    const model = settings.models.find((item) => item.id === modelId);
+    if (!model) return res.status(400).json({ error: { code: 'AI_TEST_MODEL_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    const provider = settings.providers.find((item) => item.id === model.providerId);
+    if (!provider) return res.status(400).json({ error: { code: 'AI_TEST_PROVIDER_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    try {
+      await probeAiModel(provider, model, settings.apiKeys[provider.id]);
+      return res.json({ data: { task: parsed.data.task, success: true }, meta: { requestId: req.requestId } });
+    } catch (error) {
+      const code = error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
+      return res.status(aiProbeErrorStatus[code] || 502).json({ error: { code, retryable: isAiProbeRetryable(error) }, meta: { requestId: req.requestId } });
+    }
+  } catch (error) { sendAiSettingsError(error, req, res, next); }
+});
+
 authRouter.put('/ai-settings', requireCsrf, requireUser, async (req, res, next) => {
   try {
     const input = parseAiSettingsRequest(req, res);
@@ -387,10 +431,11 @@ authRouter.post('/ai-settings/migrate', requireCsrf, requireUser, async (req, re
     input.models.forEach((model) => { if (!modelMap.has(model.id) && providerIds.has(model.providerId)) modelMap.set(model.id, model); });
     const models = [...modelMap.values()];
     const modelIds = new Set(models.map((model) => model.id));
-    const assignments = Object.fromEntries(Object.entries(existing.assignments).map(([task, modelId]) => [
-      task,
-      modelId && modelIds.has(modelId) ? modelId : (modelIds.has(input.assignments[task]) ? input.assignments[task] : '')
-    ]));
+    const assignments = Object.fromEntries(['receipt', 'conversation'].map((task) => {
+      const existingModel = existing.assignments?.[task];
+      const incomingModel = input.assignments[task];
+      return [task, existingModel && modelIds.has(existingModel) ? existingModel : (modelIds.has(incomingModel) ? incomingModel : '')];
+    }));
     const settings = { providers, models, assignments, apiKeys };
     await writeAiSettings(req.user._id, settings);
     res.json({ data: publicAiSettings(settings), meta: { requestId: req.requestId } });
