@@ -60,7 +60,7 @@ export async function requireUser(req, res, next) {
     return unauthorized(res, req);
   }
   try {
-    const user = await User.findById(payload.sub).select('+passwordHash');
+    const user = await User.findById(payload.sub);
     if (!user || user.status !== 'active' || user.sessionVersion !== payload.sv) return unauthorized(res, req);
     req.user = user;
     return next();

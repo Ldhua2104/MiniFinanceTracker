@@ -1,22 +1,33 @@
 import mongoose from 'mongoose';
 import { connectDatabase, disconnectDatabase } from './connect.js';
-import { User, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification, Workspace } from '../models/index.js';
+import { User, UserProfile, Account, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification, Workspace } from '../models/index.js';
 
 const definitions = [
-  [User, { bsonType: 'object', required: ['email', 'passwordHash', 'role', 'status', 'baseCurrency'], properties: {
+  [User, { bsonType: 'object', required: ['email', 'passwordHash', 'role', 'status'], properties: {
     email: { bsonType: 'string', maxLength: 254 }, passwordHash: { bsonType: 'string' },
-    role: { enum: ['user', 'admin'] }, status: { enum: ['active', 'disabled'] }, baseCurrency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }
+    role: { enum: ['user', 'admin'] }, status: { enum: ['active', 'disabled'] }, sessionVersion: { bsonType: ['int', 'long'], minimum: 0 }
   } }],
-  [Category, { bsonType: 'object', required: ['userId', 'name', 'type'], properties: {
-    userId: { bsonType: 'objectId' }, name: { bsonType: 'string', maxLength: 50 }, type: { enum: ['income', 'expense'] }, archivedAt: { bsonType: ['date', 'null'] }
+  [UserProfile, { bsonType: 'object', required: ['userId', 'username', 'baseCurrency', 'timezone'], properties: {
+    userId: { bsonType: 'objectId' }, username: { bsonType: 'string', maxLength: 60 }, avatarPath: { bsonType: 'string', maxLength: 180 },
+    baseCurrency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, timezone: { bsonType: 'string', maxLength: 64 }, emailAlertsEnabled: { bsonType: 'bool' }
   } }],
-  [Transaction, { bsonType: 'object', required: ['userId', 'categoryId', 'type', 'amount', 'currency', 'transactionDate', 'fxRate', 'fxDate', 'baseCurrency', 'baseAmount'], properties: {
-    userId: { bsonType: 'objectId' }, categoryId: { bsonType: 'objectId' }, type: { enum: ['income', 'expense'] },
-    amount: { bsonType: 'decimal' }, currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, transactionDate: { bsonType: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
-    fxRate: { bsonType: 'decimal' }, fxDate: { bsonType: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, baseCurrency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, baseAmount: { bsonType: 'decimal' }
+  [Account, { bsonType: 'object', required: ['userId', 'id', 'name', 'currency', 'openingBalance'], properties: {
+    userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 60 },
+    currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, openingBalance: { bsonType: 'string', pattern: '^\\d{1,16}(?:\\.\\d{1,2})?$' }
   } }],
-  [Budget, { bsonType: 'object', required: ['userId', 'categoryId', 'month', 'amount', 'currency'], properties: {
-    userId: { bsonType: 'objectId' }, categoryId: { bsonType: 'objectId' }, month: { bsonType: 'string', pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }, amount: { bsonType: 'decimal' }, currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }
+  [Category, { bsonType: 'object', required: ['userId', 'id', 'name', 'type'], properties: {
+    userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 50 },
+    type: { enum: ['income', 'expense'] }, archived: { bsonType: 'bool' }, color: { bsonType: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
+  } }],
+  [Transaction, { bsonType: 'object', required: ['userId', 'id', 'categoryId', 'type', 'amount', 'currency', 'title', 'transactionDate'], properties: {
+    userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, categoryId: { bsonType: 'string', maxLength: 80 }, accountId: { bsonType: ['string', 'null'] }, type: { enum: ['income', 'expense'] },
+    amount: { bsonType: 'string', pattern: '^\\d{1,16}(?:\\.\\d{1,2})?$' }, currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, transactionDate: { bsonType: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+    transactionTime: { bsonType: 'string', pattern: '^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$' }, title: { bsonType: 'string', maxLength: 100 }, note: { bsonType: 'string', maxLength: 500 },
+    noteImage: { bsonType: 'string', maxLength: 180 }, recurring: { bsonType: 'object' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
+  } }],
+  [Budget, { bsonType: 'object', required: ['userId', 'id', 'name', 'categoryId', 'amount', 'currency', 'color'], properties: {
+    userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 60 }, categoryId: { bsonType: 'string', maxLength: 80 },
+    amount: { bsonType: 'string', pattern: '^\\d{1,16}(?:\\.\\d{1,2})?$' }, currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, color: { bsonType: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
   } }],
   [Notification, { bsonType: 'object', required: ['userId', 'threshold', 'snapshot'], properties: {
     userId: { bsonType: 'objectId' }, budgetId: { bsonType: ['objectId', 'null'] }, threshold: { enum: [80, 100] }, snapshot: { bsonType: 'object' }, readAt: { bsonType: ['date', 'null'] }
@@ -36,9 +47,12 @@ const definitions = [
     userId: { bsonType: 'objectId' }, codeHash: { bsonType: 'string' }, expiresAt: { bsonType: 'date' }, attempts: { bsonType: 'int', minimum: 0, maximum: 5 }, consumedAt: { bsonType: ['date', 'null'] }
   } }],
   [Workspace, { bsonType: 'object', required: ['userId'], properties: {
-    userId: { bsonType: 'objectId' }, accounts: { bsonType: 'array' }, categories: { bsonType: 'array' }, transactions: { bsonType: 'array' }, budgets: { bsonType: 'array' }, revision: { bsonType: ['int', 'long'], minimum: 0 }
+    userId: { bsonType: 'objectId' }, revision: { bsonType: ['int', 'long'], minimum: 0 }, schemaVersion: { bsonType: ['int', 'long'], minimum: 1 }
   } }]
 ];
+const validatorsOnly = process.argv.includes('--validators-only');
+const unknownOptions = process.argv.slice(2).filter((argument) => argument !== '--validators-only');
+if (unknownOptions.length) throw new Error(`Unknown option(s): ${unknownOptions.join(', ')}`);
 
 try {
   const connection = await connectDatabase();
@@ -52,8 +66,8 @@ try {
       validationLevel: 'strict',
       validationAction: 'error'
     });
-    await Model.createIndexes();
-    console.log(`Initialized ${collectionName}`);
+    if (!validatorsOnly) await Model.createIndexes();
+    console.log(`${validatorsOnly ? 'Validated' : 'Initialized'} ${collectionName}`);
   }
 } finally {
   await disconnectDatabase();

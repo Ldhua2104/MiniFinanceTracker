@@ -11,6 +11,7 @@ const imageDataUrl = z.string()
   .max(MAX_IMAGE_DATA_URL_LENGTH)
   .regex(/^(?:data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2})?$/)
   .refine((value) => !value || Buffer.from(value.slice(value.indexOf(',') + 1), 'base64').length <= MAX_IMAGE_BYTES);
+const avatarPath = z.string().max(180).regex(/^\/api\/v1\/auth\/avatars\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i);
 
 export const registerInput = z.object({
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
@@ -23,7 +24,7 @@ export const registerInput = z.object({
 
 export const profileInput = z.object({
   username: z.string().trim().min(1).max(60),
-  avatar: imageDataUrl
+  avatar: z.union([imageDataUrl, avatarPath])
 }).strict();
 
 export const transactionCreateInput = z.object({
