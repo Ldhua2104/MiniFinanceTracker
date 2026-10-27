@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { connectDatabase, disconnectDatabase } from './connect.js';
-import { User, UserProfile, Account, Category, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification, Workspace } from '../models/index.js';
+import { User, UserProfile, Account, Category, IncomeSource, Transaction, Budget, Notification, EmailJob, AiAnalysis, AiSettings, EmailVerification, Workspace } from '../models/index.js';
 
 const definitions = [
   [User, { bsonType: 'object', required: ['email', 'passwordHash', 'role', 'status'], properties: {
@@ -17,7 +17,11 @@ const definitions = [
   } }],
   [Category, { bsonType: 'object', required: ['userId', 'id', 'name', 'type'], properties: {
     userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 50 },
-    type: { enum: ['income', 'expense'] }, archived: { bsonType: 'bool' }, color: { bsonType: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
+    type: { enum: ['expense'] }, archived: { bsonType: 'bool' }, color: { bsonType: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
+  } }],
+  [IncomeSource, { bsonType: 'object', required: ['userId', 'id', 'name'], properties: {
+    userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 50 },
+    archived: { bsonType: 'bool' }, archivedAt: { bsonType: ['date', 'null'] }, color: { bsonType: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
   } }],
   [Transaction, { bsonType: 'object', required: ['userId', 'id', 'categoryId', 'type', 'amount', 'currency', 'title', 'transactionDate'], properties: {
     userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, categoryId: { bsonType: 'string', maxLength: 80 }, accountId: { bsonType: ['string', 'null'] }, type: { enum: ['income', 'expense'] },

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
-import { Account, AiSettings, Budget, Category, Transaction, User, UserProfile, Workspace } from '../models/index.js';
+import { Account, AiSettings, Budget, Category, IncomeSource, Transaction, User, UserProfile, Workspace } from '../models/index.js';
 import { MAX_IMAGE_BYTES, profileInput, registerInput } from '../domain/validation.js';
 import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
@@ -346,13 +346,18 @@ authRouter.post('/logout', requireCsrf, async (req, res, next) => {
 
 authRouter.get('/workspace', requireUser, async (req, res, next) => {
   try {
-    const [workspace, accounts, categories, transactions, budgets] = await Promise.all([
+    const [workspace, accounts, expenseCategories, incomeSources, transactions, budgets] = await Promise.all([
       Workspace.findOne({ userId: req.user._id }).lean(),
       Account.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean(),
-      Category.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder -archivedAt').lean(),
+      Category.find({ userId: req.user._id, type: 'expense' }).sort({ sortOrder: 1, _id: 1 }).select('-_id -archivedAt').lean(),
+      IncomeSource.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -archivedAt').lean(),
       Transaction.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean(),
       Budget.find({ userId: req.user._id }).sort({ sortOrder: 1, _id: 1 }).select('-_id -sortOrder').lean()
     ]);
+    const categories = [
+      ...expenseCategories,
+      ...incomeSources.map(({ sortOrder, ...source }) => ({ ...source, type: 'income', sortOrder }))
+    ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)).map(({ sortOrder, ...category }) => category);
     res.json({
       data: { accounts, categories, transactions, budgets, revision: workspace?.revision || 0 },
       meta: { requestId: req.requestId }
@@ -360,29 +365,40 @@ authRouter.get('/workspace', requireUser, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-async function replaceUserItems(Model, userId, items) {
+async function replaceUserItems(Model, userId, items, scope = {}) {
   if (items.length) {
     await Model.bulkWrite(items.map((item, sortOrder) => ({
       replaceOne: {
-        filter: { userId, id: item.id },
-        replacement: { ...item, userId, sortOrder },
+        filter: { ...scope, userId, id: item.id },
+        replacement: { ...item, userId, sortOrder: item.sortOrder ?? sortOrder },
         upsert: true
       }
     })), { ordered: true });
   }
-  await Model.deleteMany({ userId, ...(items.length ? { id: { $nin: items.map((item) => item.id) } } : {}) });
+  await Model.deleteMany({ ...scope, userId, ...(items.length ? { id: { $nin: items.map((item) => item.id) } } : {}) });
 }
 
 authRouter.put('/workspace', requireCsrf, requireUser, async (req, res, next) => {
   try {
     const data = workspaceInput.parse(req.body);
     await replaceUserItems(Account, req.user._id, data.accounts);
-    await replaceUserItems(Category, req.user._id, data.categories);
+    const expenseCategories = [];
+    const incomeSources = [];
+    data.categories.forEach((category, sortOrder) => {
+      if (category.type === 'income') {
+        const { type: _type, ...source } = category;
+        incomeSources.push({ ...source, sortOrder });
+      } else {
+        expenseCategories.push({ ...category, sortOrder });
+      }
+    });
+    await replaceUserItems(Category, req.user._id, expenseCategories, { type: 'expense' });
+    await replaceUserItems(IncomeSource, req.user._id, incomeSources);
     await replaceUserItems(Transaction, req.user._id, data.transactions);
     await replaceUserItems(Budget, req.user._id, data.budgets);
     const workspace = await Workspace.findOneAndUpdate(
       { userId: req.user._id },
-      { $inc: { revision: 1 }, $setOnInsert: { schemaVersion: 2 } },
+      { $inc: { revision: 1 }, $set: { schemaVersion: 3 } },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     ).lean();
     res.json({ data: { ...data, revision: workspace.revision }, meta: { requestId: req.requestId } });

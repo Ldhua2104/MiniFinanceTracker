@@ -76,7 +76,7 @@ async function migrate() {
   const userById = new Map(legacyUsers.map((user) => [String(user._id), user]));
   const workspaces = await workspacesCollection.find({}).toArray();
   const plans = [];
-  const counts = { users: legacyUsers.length, workspaces: workspaces.length, alreadyMigrated: 0, accounts: 0, categories: 0, budgets: 0, transactions: 0, uploadFiles: 0, avatars: 0 };
+  const counts = { users: legacyUsers.length, workspaces: workspaces.length, alreadyMigrated: 0, accounts: 0, categories: 0, incomeSources: 0, budgets: 0, transactions: 0, uploadFiles: 0, avatars: 0 };
 
   for (const workspace of workspaces) {
     if (workspace.schemaVersion >= 2 && ['accounts', 'categories', 'budgets', 'transactions'].every((field) => workspace[field] === undefined)) {
@@ -118,22 +118,27 @@ async function migrate() {
 
     const targets = {
       accounts: accounts.map((item, sortOrder) => ({ ...item, userId, sortOrder })),
-      categories: categories.map((item, sortOrder) => ({ ...item, archived: Boolean(item.archived), userId, sortOrder })),
+      categories: categories.map((item, sortOrder) => item.type === 'expense' ? ({ ...item, archived: Boolean(item.archived), userId, sortOrder }) : null).filter(Boolean),
+      incomeSources: categories.map((item, sortOrder) => {
+        if (item.type !== 'income') return null;
+        const { type: _type, ...source } = item;
+        return { ...source, archived: Boolean(item.archived), userId, sortOrder };
+      }).filter(Boolean),
       budgets: budgets.map((item, sortOrder) => ({ ...item, color: item.color || '#557b63', userId, sortOrder })),
       transactions: transactions.map((item, sortOrder) => ({ ...item, userId, sortOrder }))
     };
-    const collectionNames = { accounts: 'accounts', categories: 'categories', budgets: 'budgets', transactions: 'transactions' };
+    const collectionNames = { accounts: 'accounts', categories: 'categories', incomeSources: 'incomesources', budgets: 'budgets', transactions: 'transactions' };
     for (const [kind, records] of Object.entries(targets)) {
       counts[kind] += records.length;
       const targetCollection = db.collection(collectionNames[kind]);
       const recordsWithoutId = await targetCollection.find({ userId, $or: [{ id: { $exists: false } }, { id: null }] }).toArray();
-      if (kind !== 'categories' && recordsWithoutId.length) {
+      if (!['categories', 'incomeSources'].includes(kind) && recordsWithoutId.length) {
         throw new Error(`${collectionNames[kind]} contains ${recordsWithoutId.length} legacy record(s) without a stable id for user ${userIdString}; resolve these before creating the new indexes`);
       }
-      if (kind === 'categories') {
-        const incomingNames = new Set(records.map((record) => `${record.type}\u0000${record.name}`));
-        const unmatched = recordsWithoutId.find((record) => !incomingNames.has(`${record.type}\u0000${record.name}`));
-        if (unmatched) throw new Error(`Legacy category ${unmatched.type}/${unmatched.name} for user ${userIdString} is not represented in the workspace; add or remove it before migration`);
+      if (kind === 'categories' || kind === 'incomeSources') {
+        const incomingNames = new Set(records.map((record) => kind === 'categories' ? `${record.type}\u0000${record.name}` : record.name));
+        const unmatched = recordsWithoutId.find((record) => !incomingNames.has(kind === 'categories' ? `${record.type}\u0000${record.name}` : record.name));
+        if (unmatched) throw new Error(`Legacy ${kind === 'categories' ? 'category' : 'income source'} ${unmatched.name} for user ${userIdString} is not represented in the workspace; add or remove it before migration`);
       }
       for (const record of records) {
         const existing = await targetCollection.findOne({ userId, id: record.id });
@@ -143,6 +148,9 @@ async function migrate() {
         if (kind === 'categories') {
           const sameName = await targetCollection.findOne({ userId, type: record.type, name: record.name, id: { $ne: record.id } });
           if (sameName?.id && sameName.id !== record.id) throw new Error(`Category name conflict for user ${userIdString}: ${record.type}/${record.name}`);
+        } else if (kind === 'incomeSources') {
+          const sameName = await targetCollection.findOne({ userId, name: record.name, id: { $ne: record.id } });
+          if (sameName?.id && sameName.id !== record.id) throw new Error(`Income source name conflict for user ${userIdString}: ${record.name}`);
         } else if (kind === 'budgets') {
           const sameCategory = await targetCollection.findOne({ userId, categoryId: record.categoryId, id: { $ne: record.id } });
           if (sameCategory) throw new Error(`Budget conflict for user ${userIdString}: category ${record.categoryId} already has a different budget`);
@@ -208,10 +216,10 @@ async function migrate() {
     }
     const uploadFiles = await copyUserUploads(userIdString);
     counts.uploadFiles += uploadFiles.length;
-    plans.push({ userId, userIdString, targets: { accounts: [], categories: [], budgets: [], transactions: [] }, profile, existingProfile, avatarFile, uploadFiles, legacyUser, workspace: null, collectionNames: { accounts: 'accounts', categories: 'categories', budgets: 'budgets', transactions: 'transactions' } });
+    plans.push({ userId, userIdString, targets: { accounts: [], categories: [], incomeSources: [], budgets: [], transactions: [] }, profile, existingProfile, avatarFile, uploadFiles, legacyUser, workspace: null, collectionNames: { accounts: 'accounts', categories: 'categories', incomeSources: 'incomesources', budgets: 'budgets', transactions: 'transactions' } });
   }
 
-  console.log(`${commit ? 'COMMIT' : 'DRY RUN'}: ${counts.users} users, ${counts.workspaces} workspaces (${counts.alreadyMigrated} already migrated), ${counts.accounts} accounts, ${counts.categories} categories, ${counts.budgets} budgets, ${counts.transactions} transactions; ${counts.uploadFiles} legacy uploads and ${counts.avatars} avatars.`);
+  console.log(`${commit ? 'COMMIT' : 'DRY RUN'}: ${counts.users} users, ${counts.workspaces} workspaces (${counts.alreadyMigrated} already migrated), ${counts.accounts} accounts, ${counts.categories} expense categories, ${counts.incomeSources} income sources, ${counts.budgets} budgets, ${counts.transactions} transactions; ${counts.uploadFiles} legacy uploads and ${counts.avatars} avatars.`);
   if (!commit) {
     console.log('No database documents or files were changed. Review the plan, then run with --commit.');
     return;
@@ -236,9 +244,9 @@ async function migrate() {
       const collection = db.collection(collectionNames[kind]);
       for (const record of records) {
         for (const key of Object.keys(record)) if (record[key] === undefined) delete record[key];
-        if (kind === 'categories') {
+        if (kind === 'categories' || kind === 'incomeSources') {
           const byId = await collection.findOne({ userId, id: record.id });
-          const existing = byId || await collection.findOne({ userId, type: record.type, name: record.name });
+          const existing = byId || await collection.findOne(kind === 'categories' ? { userId, type: record.type, name: record.name } : { userId, name: record.name });
           if (existing) await collection.updateOne({ _id: existing._id }, { $set: record });
           else await collection.insertOne(record);
         } else {
@@ -249,7 +257,7 @@ async function migrate() {
     if (existingProfile) await profileCollection.updateOne({ _id: existingProfile._id }, { $set: profile });
     else await profileCollection.insertOne(profile);
     if (workspace) {
-      await db.collection('workspaces').updateOne({ _id: workspace._id }, { $set: { schemaVersion: 2 } });
+      await db.collection('workspaces').updateOne({ _id: workspace._id }, { $set: { schemaVersion: 3 } });
       if (stripLegacy) await db.collection('workspaces').updateOne({ _id: workspace._id }, { $unset: { accounts: '', categories: '', budgets: '', transactions: '' } });
     }
     if (stripLegacy) {

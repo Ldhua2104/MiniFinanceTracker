@@ -2,6 +2,7 @@ export { User } from './user.model.js';
 export { UserProfile } from './user-profile.model.js';
 export { Account } from './account.model.js';
 export { Category } from './category.model.js';
+export { IncomeSource } from './income-source.model.js';
 export { Transaction } from './transaction.model.js';
 export { Budget } from './budget.model.js';
 export { Notification } from './notification.model.js';
