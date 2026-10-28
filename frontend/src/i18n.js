@@ -106,6 +106,11 @@ const enAssistantMessages = {
     assistant: 'AI assistant', assistantIntro: 'Manage conversations with your configured AI model.', conversations: 'Conversations', newConversation: 'New conversation', deleteConversation: 'Delete conversation', confirmDeleteConversation: 'Delete this conversation? This cannot be undone.', noConversations: 'No conversations yet.', availableTools: 'Available tools', assistantToolsHint: 'Tools will be available for conversations in a future update.', assistantChat: 'Conversation', conversationReady: 'Conversation ready', conversationReadyHint: 'Messages are saved in this browser.', assistantWelcome: 'AI assistant', assistantWelcomeHint: 'Create a conversation to start chatting with your configured model.', assistantLoadingModel: 'Loading model…', assistantModelUnavailable: 'Model configuration unavailable', assistantModelUnassigned: 'No conversation model assigned', assistantModelMissingKey: 'API key missing', messageComposer: 'Message', assistantComingSoon: 'Chat is ready for your message', sendMessage: 'Send message', configureAi: 'Configure AI', close: 'Close', collapseConversations: 'Collapse conversation list', expandConversations: 'Expand conversation list', tokenAnalysisTool: 'Analyze current conversation token usage', toolComingSoon: 'Not enabled yet', toolPlanned: 'Planned', assistantSignInRequired: 'Sign in to use AI chat.', assistantCreateConversationHint: 'Create or select a conversation first.', assistantInputHint: 'Press Ctrl/⌘ + Enter to send', assistantSending: 'Generating a reply…', assistantSendFailed: 'Could not send the message. Please try again.'
 };
 
+const tokenUsageMessages = {
+    en: { tokenModelTotal: 'Total usage for this model', tokenConversationDetails: 'Usage by conversation', tokenInput: 'Input', tokenOutput: 'Output', tokenUsageEmpty: 'No conversations yet.' },
+    zh: { tokenModelTotal: '\u5f53\u524d\u6a21\u578b\u7d2f\u8ba1\u6d88\u8017', tokenConversationDetails: '\u6bcf\u4e2a\u5bf9\u8bdd\u7684\u8be6\u7ec6\u6d88\u8017', tokenInput: '\u8f93\u5165', tokenOutput: '\u8f93\u51fa', tokenUsageEmpty: '\u6682\u65e0\u5bf9\u8bdd\u3002' }
+};
+
 export function detectLanguage() {
     const saved = localStorage.getItem('mini-finance.language');
     if (saved === 'en' || saved === 'zh') return saved;
@@ -113,6 +118,7 @@ export function detectLanguage() {
 }
 
 export function translate(language, key) {
+    if (tokenUsageMessages[language]?.[key]) return tokenUsageMessages[language][key];
     if (language === 'zh' && Object.hasOwn(zhAiMessages, key)) return zhAiMessages[key];
     return messages[language]?.[key] ?? enAssistantMessages[key] ?? messages.en[key] ?? key;
 }

@@ -175,6 +175,158 @@ export async function completeAiChat(provider, model, apiKey, messages) {
   return text.trim();
 }
 
+function postStreamingJson(url, headers, body, address, signal) {
+  return new Promise((resolve, reject) => {
+    const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const request = requestFn({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      method: 'POST',
+      headers: { ...headers, 'content-length': Buffer.byteLength(body) },
+      servername: isIP(url.hostname) ? undefined : url.hostname,
+      family: address.family,
+      lookup: (_hostname, _options, callback) => callback(null, address.address, address.family)
+    }, resolve);
+    request.setTimeout(60_000, () => request.destroy(Object.assign(new Error(), { code: 'AI_TEST_TIMEOUT' })));
+    request.on('error', (error) => reject(error.code ? error : Object.assign(new Error(), { code: 'AI_TEST_NETWORK' })));
+    if (signal) {
+      if (signal.aborted) request.destroy(Object.assign(new Error(), { code: 'AI_CHAT_ABORTED' }));
+      else signal.addEventListener('abort', () => request.destroy(Object.assign(new Error(), { code: 'AI_CHAT_ABORTED' })), { once: true });
+    }
+    request.end(body);
+  });
+}
+
+function streamedText(providerType, payload) {
+  if (providerType === 'anthropic') {
+    return payload.type === 'content_block_delta' && payload.delta?.type === 'text_delta' ? payload.delta.text : '';
+  }
+  if (providerType === 'gemini') {
+    const candidates = Array.isArray(payload) ? payload : payload.candidates ?? [];
+    return candidates.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text || '').join('');
+  }
+  return payload.choices?.[0]?.delta?.content ?? '';
+}
+
+export async function streamAiChat(provider, model, apiKey, messages, onToken, { signal, onUsage } = {}) {
+  if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
+  let endpoint;
+  try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' });
+  }
+  if (endpoint.protocol !== 'https:') throw Object.assign(new Error(), { code: 'AI_TEST_INSECURE_ENDPOINT' });
+
+  const basePath = endpoint.pathname.replace(/\/+$/, '');
+  const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n');
+  const dialog = messages.filter((message) => message.role !== 'system');
+  let url;
+  let headers = { 'content-type': 'application/json', accept: 'text/event-stream' };
+  let body;
+  if (provider.type === 'anthropic') {
+    const path = basePath.endsWith('/messages') ? basePath : `${basePath}/messages`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers = { ...headers, 'x-api-key': apiKey.trim(), 'anthropic-version': '2023-06-01' };
+    body = { model: model.name, max_tokens: 1200, system, messages: dialog, stream: true };
+  } else if (provider.type === 'gemini') {
+    const path = basePath.includes(':generateContent')
+      ? basePath.replace(':generateContent', ':streamGenerateContent')
+      : `${basePath}/models/${encodeURIComponent(model.name)}:streamGenerateContent`;
+    const search = new URLSearchParams(endpoint.search);
+    search.set('alt', 'sse');
+    url = new URL(`${path}?${search.toString()}`, endpoint.origin);
+    headers['x-goog-api-key'] = apiKey.trim();
+    body = {
+      systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+      contents: dialog.map(({ role, content }) => ({ role: role === 'assistant' ? 'model' : 'user', parts: [{ text: content }] })),
+      generationConfig: { maxOutputTokens: 1200 }
+    };
+  } else {
+    const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers.authorization = `Bearer ${apiKey.trim()}`;
+    body = { model: model.name, messages, max_tokens: 1200, stream: true, stream_options: { include_usage: true } };
+  }
+
+  const address = await resolvePublicAddress(url.hostname);
+  let response = await postStreamingJson(url, headers, JSON.stringify(body), address, signal);
+  if (response.statusCode === 400 && body.stream_options) {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response) {
+      size += chunk.length;
+      if (size > 256 * 1024) break;
+      chunks.push(chunk);
+    }
+    const errorText = Buffer.concat(chunks).toString('utf8');
+    if (/stream[_ ]options/i.test(errorText)) {
+      const fallbackBody = { ...body };
+      delete fallbackBody.stream_options;
+      response = await postStreamingJson(url, headers, JSON.stringify(fallbackBody), address, signal);
+    } else {
+      throw Object.assign(new Error(), { code: responseError(response.statusCode), retryable: false });
+    }
+  }
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    let size = 0;
+    for await (const chunk of response) {
+      size += chunk.length;
+      if (size > 256 * 1024) break;
+      if (signal?.aborted) break;
+    }
+    throw Object.assign(new Error(), { code: responseError(response.statusCode || 0), retryable: response.statusCode === 429 || response.statusCode >= 500 });
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let emitted = false;
+  let usage = null;
+  function consumeLine(rawLine) {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trimStart();
+    if (!data || data === '[DONE]') return;
+    let payload;
+    try { payload = JSON.parse(data); } catch { return; }
+    const rawUsage = provider.type === 'anthropic' ? (payload.message?.usage ?? payload.usage)
+      : provider.type === 'gemini' ? payload.usageMetadata
+        : payload.usage;
+    if (rawUsage) {
+      const inputTokens = Number(rawUsage.input_tokens ?? rawUsage.prompt_tokens ?? rawUsage.promptTokenCount);
+      const outputTokens = Number(rawUsage.output_tokens ?? rawUsage.completion_tokens ?? rawUsage.candidatesTokenCount);
+      const totalTokens = Number(rawUsage.total_tokens ?? rawUsage.totalTokenCount);
+      usage = {
+        inputTokens: Number.isFinite(inputTokens) ? inputTokens : usage?.inputTokens ?? 0,
+        outputTokens: Number.isFinite(outputTokens) ? outputTokens : usage?.outputTokens ?? 0,
+        totalTokens: Number.isFinite(totalTokens) ? totalTokens : undefined
+      };
+      if (!Number.isFinite(usage.totalTokens)) usage.totalTokens = usage.inputTokens + usage.outputTokens;
+    }
+    const text = streamedText(provider.type, payload);
+    if (text) {
+      emitted = true;
+      onToken(text);
+    }
+    if (payload.error) throw Object.assign(new Error(), { code: responseError(payload.error.status || 502) });
+  }
+  for await (const chunk of response) {
+    if (signal?.aborted) throw Object.assign(new Error(), { code: 'AI_CHAT_ABORTED' });
+    buffer += decoder.decode(chunk, { stream: true });
+    let newline;
+    while ((newline = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      consumeLine(line);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeLine(buffer);
+  if (!emitted) throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' });
+  if (usage && onUsage) onUsage(usage);
+}
+
 export function isAiProbeRetryable(error) {
   return Boolean(error.retryable || ['AI_TEST_TIMEOUT', 'AI_TEST_NETWORK'].includes(error.code));
 }

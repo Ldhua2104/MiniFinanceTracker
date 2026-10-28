@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest } from '../api/client.js';
+import { apiRequest, apiStream } from '../api/client.js';
 import { loadLocalAiSettings } from '../data/ai-settings.js';
 import { PageTitle } from '../components/PageTitle.jsx';
+import { MarkdownContent } from '../components/MarkdownContent.jsx';
 
 function readConversations(storageKey) {
   try {
@@ -20,7 +21,7 @@ function readConversations(storageKey) {
   }
 }
 
-export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language }) {
+export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, onContextChange }) {
   const storageKey = `mini-finance.ai-conversations.v1${user?.id ? `.${user.id}` : '.anonymous'}`;
   const [storedConversations, setStoredConversations] = useState({ key: '', items: [] });
   const [selectedId, setSelectedId] = useState('');
@@ -29,6 +30,8 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
   const [conversationsExpanded, setConversationsExpanded] = useState(true);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  const [streamingConversationId, setStreamingConversationId] = useState('');
   const [sendError, setSendError] = useState('');
   const messageAreaRef = useRef(null);
 
@@ -76,8 +79,12 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     return () => { active = false; };
   }, [user?.id]);
 
-  const conversations = storedConversations.key === storageKey ? storedConversations.items : [];
+  const conversations = useMemo(() => storedConversations.key === storageKey ? storedConversations.items : [], [storedConversations, storageKey]);
   const selectedConversation = useMemo(() => conversations.find((item) => item.id === selectedId) ?? null, [conversations, selectedId]);
+
+  useEffect(() => {
+    onContextChange?.({ model, conversations });
+  }, [model, conversations, onContextChange]);
 
   useEffect(() => {
     const area = messageAreaRef.current;
@@ -116,24 +123,44 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     setSendError('');
     setDraft('');
     setSending(true);
+    setStreamingText('');
+    setStreamingConversationId(conversationId);
     setStoredConversations((current) => ({
       ...current,
       items: current.items.map((item) => item.id === conversationId ? { ...item, title: item.messages?.length ? item.title : content.slice(0, 48), messages: pendingMessages } : item)
     }));
+    let responseText = '';
+    let streamedUsage = null;
     try {
-      const { data } = await apiRequest('/assistant/chat', {
+      await apiStream('/auth/assistant/chat', {
         method: 'POST',
         body: JSON.stringify({ messages: contextMessages })
+      }, (event, data) => {
+        if (event === 'token' && typeof data.text === 'string') {
+          responseText += data.text;
+          setStreamingText(responseText);
+        }
+        if (event === 'usage' && Number.isFinite(data.totalTokens)) streamedUsage = data;
       });
-      const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: data.content, createdAt: new Date().toISOString() };
+      const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, createdAt: new Date().toISOString() };
       setStoredConversations((current) => ({
         ...current,
-        items: current.items.map((item) => item.id === conversationId ? { ...item, messages: [...(item.messages ?? []), assistantMessage] } : item)
+        items: current.items.map((item) => item.id === conversationId ? {
+          ...item,
+          messages: [...(item.messages ?? []), assistantMessage],
+          tokenUsage: streamedUsage ? [...(item.tokenUsage ?? []), { ...streamedUsage, createdAt: new Date().toISOString() }] : (item.tokenUsage ?? [])
+        } : item)
       }));
     } catch (error) {
       setStoredConversations((current) => ({
         ...current,
-        items: current.items.map((item) => item.id === conversationId ? { ...item, messages: (item.messages ?? []).filter((message) => message.id !== userMessage.id) } : item)
+        items: current.items.map((item) => {
+          if (item.id !== conversationId) return item;
+          const messages = responseText.trim()
+            ? [...(item.messages ?? []), { id: crypto.randomUUID(), role: 'assistant', content: responseText, createdAt: new Date().toISOString(), incomplete: true }]
+            : (item.messages ?? []).filter((message) => message.id !== userMessage.id);
+          return { ...item, messages };
+        })
       }));
       setDraft(content);
       setSendError(error.code === 'UNAUTHENTICATED' ? 'assistantSignInRequired'
@@ -142,6 +169,8 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
             : error.code === 'AI_TEST_AUTH_FAILED' ? 'aiTestAuthFailed' : 'assistantSendFailed');
     } finally {
       setSending(false);
+      setStreamingText('');
+      setStreamingConversationId('');
     }
   }
 
@@ -173,7 +202,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
         </header>
 
         <div className={`assistant-message-area ${selectedConversation?.messages?.length ? 'has-messages' : ''}`} ref={messageAreaRef} aria-live="polite">
-          {selectedConversation?.messages?.length ? <div className="assistant-message-list">{selectedConversation.messages.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div>{message.content}</div></article>)}{sending && <article className="assistant-message assistant"><div className="assistant-typing-indicator"><i /><i /><i /></div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
+          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div><MarkdownContent content={message.content} /></div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
         </div>
 
         <div className="assistant-composer-wrap">
@@ -190,14 +219,36 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
   </section>;
 }
 
-export function AssistantToolsPanel({ t }) {
+export function AssistantToolsPanel({ t, language, model, conversations }) {
+  const formatCount = (count) => new Intl.NumberFormat(language === 'zh' ? 'zh-CN' : 'en-US').format(count);
+  const usageFor = (conversation) => (conversation.tokenUsage ?? [])
+    .filter((usage) => usage.modelId === model?.id)
+    .reduce((total, usage) => ({
+      input: total.input + (Number(usage.inputTokens) || 0),
+      output: total.output + (Number(usage.outputTokens) || 0),
+      total: total.total + (Number(usage.totalTokens) || 0)
+    }), { input: 0, output: 0, total: 0 });
+  const rows = conversations.map((conversation) => ({ conversation, usage: usageFor(conversation) }));
+  const summary = rows.reduce((total, row) => ({
+    input: total.input + row.usage.input,
+    output: total.output + row.usage.output,
+    total: total.total + row.usage.total
+  }), { input: 0, output: 0, total: 0 });
+
   return <section className="assistant-tools-panel" aria-label={t('availableTools')}>
     <header><div><span className="eyebrow">{t('assistant')}</span><h2>{t('availableTools')}</h2></div></header>
-    <button className="assistant-tool-card" type="button" disabled title={t('toolComingSoon')}>
-      <span className="assistant-tool-icon" aria-hidden="true">◷</span>
-      <span className="assistant-tool-copy"><strong>{t('tokenAnalysisTool')}</strong><small>{t('toolComingSoon')}</small></span>
-      <span className="assistant-tool-status">{t('toolPlanned')}</span>
-    </button>
-    <p className="assistant-tools-panel-note">{t('assistantToolsHint')}</p>
+    <section className="assistant-token-summary">
+      <span>{t('tokenModelTotal')}</span>
+      <strong>{formatCount(summary.total)}</strong>
+      <small>{model ? (model.customName || model.name) : t('assistantModelUnassigned')}</small>
+      <div><span>{t('tokenInput')} <b>{formatCount(summary.input)}</b></span><span>{t('tokenOutput')} <b>{formatCount(summary.output)}</b></span></div>
+    </section>
+    <div className="assistant-token-details">
+      <h3>{t('tokenConversationDetails')}</h3>
+      {rows.length ? <ul>{rows.map(({ conversation, usage }) => <li key={conversation.id}>
+        <div className="assistant-token-row-title"><strong>{conversation.title}</strong><span>{formatCount(usage.total)}</span></div>
+        <small>{t('tokenInput')} {formatCount(usage.input)} · {t('tokenOutput')} {formatCount(usage.output)}</small>
+      </li>)}</ul> : <p>{t('tokenUsageEmpty')}</p>}
+    </div>
   </section>;
 }

@@ -32,6 +32,7 @@ export function App() {
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
   const [assistantToolsOpen, setAssistantToolsOpen] = useState(false);
+  const [assistantContext, setAssistantContext] = useState({ model: null, conversations: [] });
   const [editingAccount, setEditingAccount] = useState(null);
   const [rightEditor, setRightEditor] = useState(null);
   const [editingBudget, setEditingBudget] = useState(null);
@@ -88,6 +89,10 @@ export function App() {
   useEffect(() => {
     if (page !== 'assistant') setAssistantToolsOpen(false);
   }, [page]);
+
+  useEffect(() => {
+    setAssistantContext({ model: null, conversations: [] });
+  }, [user?.id]);
 
   useEffect(() => {
     if (page === 'assistant' && assistantToolsOpen) setRightRailCollapsed(false);
@@ -402,7 +407,7 @@ export function App() {
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
           ) : page === 'assistant' ? (
-            <AssistantPage user={user} t={t} language={language} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} />
+            <AssistantPage user={user} t={t} language={language} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
@@ -415,7 +420,7 @@ export function App() {
           </div>
           <div className="right-rail-content">
           {page === 'assistant' && assistantToolsOpen ? (
-            <AssistantToolsPanel t={t} />
+            <AssistantToolsPanel t={t} language={language} model={assistantContext.model} conversations={assistantContext.conversations} />
           ) : rightEditor === 'account' ? (
             <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
           ) : rightEditor === 'budget' ? (

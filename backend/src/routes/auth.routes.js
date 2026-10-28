@@ -12,7 +12,7 @@ import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
 import { decryptAiSettings, encryptAiSettings } from '../services/ai-settings-crypto.js';
-import { completeAiChat, isAiProbeRetryable, probeAiModel } from '../services/ai-probe.js';
+import { isAiProbeRetryable, probeAiModel, streamAiChat } from '../services/ai-probe.js';
 
 export const authRouter = Router();
 const userStorageRoot = fileURLToPath(new URL('../../storage/users/', import.meta.url));
@@ -531,14 +531,34 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
 
     const systemPrompt = (await readFile(assistantPromptFile, 'utf8')).replace(/^\uFEFF/, '').trim();
     if (!systemPrompt) return res.status(503).json({ error: { code: 'AI_CHAT_PROMPT_UNAVAILABLE' }, meta: { requestId: req.requestId } });
+    const controller = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
-      const reply = await completeAiChat(provider, model, settings.apiKeys[provider.id], [
+      const messages = [
         { role: 'system', content: systemPrompt },
         ...parsed.data.messages
-      ]);
-      return res.json({ data: { role: 'assistant', content: reply, model: model.customName || model.name }, meta: { requestId: req.requestId } });
+      ];
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+      await streamAiChat(provider, model, settings.apiKeys[provider.id], messages, (text) => {
+        res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
+      }, {
+        signal: controller.signal,
+        onUsage: (usage) => res.write(`event: usage\ndata: ${JSON.stringify({ ...usage, modelId: model.id, modelName: model.customName || model.name })}\n\n`)
+      });
+      res.write(`event: done\ndata: ${JSON.stringify({ role: 'assistant', model: model.customName || model.name })}\n\n`);
+      return res.end();
     } catch (error) {
+      if (error.code === 'AI_CHAT_ABORTED' || controller.signal.aborted) return res.end();
       const code = error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
+      if (res.headersSent) {
+        res.write(`event: error\ndata: ${JSON.stringify({ code, retryable: isAiProbeRetryable(error), requestId: req.requestId })}\n\n`);
+        return res.end();
+      }
       return res.status(aiProbeErrorStatus[code] || 502).json({ error: { code, retryable: isAiProbeRetryable(error) }, meta: { requestId: req.requestId } });
     }
   } catch (error) { sendAiSettingsError(error, req, res, next); }
