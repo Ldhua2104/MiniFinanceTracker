@@ -12,7 +12,7 @@ import { budgetColors } from '../utils/colors.js';
 import { IncomePage, IncomeSourceForm } from './IncomePage.jsx';
 import { ActivityPage, TransactionForm } from './TransactionsPage.jsx';
 import { OverviewPage } from './OverviewPage.jsx';
-import { AssistantPage } from './AssistantPage.jsx';
+import { AssistantPage, AssistantToolsPanel } from './AssistantPage.jsx';
 import { SettingsPage } from './SettingsPage.jsx';
 import { ProfileAvatar, ProfilePage } from './ProfilePage.jsx';
 
@@ -31,6 +31,7 @@ export function App() {
   const [migration, setMigration] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
+  const [assistantToolsOpen, setAssistantToolsOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [rightEditor, setRightEditor] = useState(null);
   const [editingBudget, setEditingBudget] = useState(null);
@@ -83,6 +84,14 @@ export function App() {
   useEffect(() => {
     if (rightEditor) setRightRailCollapsed(false);
   }, [rightEditor]);
+
+  useEffect(() => {
+    if (page !== 'assistant') setAssistantToolsOpen(false);
+  }, [page]);
+
+  useEffect(() => {
+    if (page === 'assistant' && assistantToolsOpen) setRightRailCollapsed(false);
+  }, [page, assistantToolsOpen]);
 
   useEffect(() => {
     if (page !== 'activity' && page !== 'budgets' && page !== 'income') return undefined;
@@ -393,11 +402,11 @@ export function App() {
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
           ) : page === 'assistant' ? (
-            <AssistantPage user={user} t={t} onOpenSettings={() => setPage('settings')} />
+            <AssistantPage user={user} t={t} language={language} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
-        <aside className={`right-rail ${rightEditor ? 'editing' : ''} ${rightRailCollapsed ? 'collapsed' : ''}`}>
+        <aside className={`right-rail ${rightEditor ? 'editing' : ''} ${page === 'assistant' && assistantToolsOpen ? 'assistant-tools-visible' : ''} ${rightRailCollapsed ? 'collapsed' : ''}`}>
           <div className="right-rail-toggle-row">
             <button className="right-rail-toggle" type="button" aria-expanded={!rightRailCollapsed} aria-label={t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')} title={t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')} onClick={() => setRightRailCollapsed((collapsed) => !collapsed)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d={rightRailCollapsed ? 'm9 6 6 6-6 6' : 'm15 6-6 6 6 6'} /></svg>
@@ -405,7 +414,9 @@ export function App() {
             </button>
           </div>
           <div className="right-rail-content">
-          {rightEditor === 'account' ? (
+          {page === 'assistant' && assistantToolsOpen ? (
+            <AssistantToolsPanel t={t} />
+          ) : rightEditor === 'account' ? (
             <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
           ) : rightEditor === 'budget' ? (
             <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || financeData.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={financeData.categories} budgets={financeData.budgets} defaultCurrency={financeData.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />

@@ -12,10 +12,11 @@ import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
 import { decryptAiSettings, encryptAiSettings } from '../services/ai-settings-crypto.js';
-import { isAiProbeRetryable, probeAiModel } from '../services/ai-probe.js';
+import { completeAiChat, isAiProbeRetryable, probeAiModel } from '../services/ai-probe.js';
 
 export const authRouter = Router();
 const userStorageRoot = fileURLToPath(new URL('../../storage/users/', import.meta.url));
+const assistantPromptFile = fileURLToPath(new URL('../prompts/assistant-system.md', import.meta.url));
 const userStorageDirectory = (userId, area) => path.join(userStorageRoot, String(userId), area);
 const avatarPathPattern = /^\/api\/v1\/auth\/avatars\/([a-f\d-]{36})\.(png|jpg|webp|gif)$/i;
 const transactionImageInput = z.object({
@@ -494,6 +495,48 @@ authRouter.post('/ai-settings/test', requireCsrf, requireUser, async (req, res, 
     try {
       await probeAiModel(provider, model, settings.apiKeys[provider.id]);
       return res.json({ data: { task: parsed.data.task, success: true }, meta: { requestId: req.requestId } });
+    } catch (error) {
+      const code = error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
+      return res.status(aiProbeErrorStatus[code] || 502).json({ error: { code, retryable: isAiProbeRetryable(error) }, meta: { requestId: req.requestId } });
+    }
+  } catch (error) { sendAiSettingsError(error, req, res, next); }
+});
+
+const assistantChatInput = z.object({
+  messages: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string().trim().min(1).max(8000)
+  }).strict()).min(1).max(40)
+}).strict().superRefine(({ messages }, context) => {
+  if (messages.at(-1)?.role !== 'user') context.addIssue({ code: 'custom', path: ['messages'], message: 'The latest chat message must come from the user' });
+  if (messages.reduce((total, message) => total + message.content.length, 0) > 30000) {
+    context.addIssue({ code: 'custom', path: ['messages'], message: 'The conversation is too long' });
+  }
+});
+
+authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const parsed = assistantChatInput.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: { code: 'AI_CHAT_INVALID_INPUT', fields: z.flattenError(parsed.error).fieldErrors }, meta: { requestId: req.requestId } });
+    }
+    const settings = await readAiSettings(req.user._id);
+    const modelId = settings.assignments?.conversation;
+    if (!modelId) return res.status(400).json({ error: { code: 'AI_CHAT_MODEL_UNASSIGNED' }, meta: { requestId: req.requestId } });
+    const model = settings.models.find((item) => item.id === modelId);
+    if (!model) return res.status(400).json({ error: { code: 'AI_CHAT_MODEL_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    const provider = settings.providers.find((item) => item.id === model.providerId);
+    if (!provider) return res.status(400).json({ error: { code: 'AI_CHAT_PROVIDER_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    if (!settings.apiKeys[provider.id]) return res.status(400).json({ error: { code: 'AI_CHAT_KEY_MISSING' }, meta: { requestId: req.requestId } });
+
+    const systemPrompt = (await readFile(assistantPromptFile, 'utf8')).replace(/^\uFEFF/, '').trim();
+    if (!systemPrompt) return res.status(503).json({ error: { code: 'AI_CHAT_PROMPT_UNAVAILABLE' }, meta: { requestId: req.requestId } });
+    try {
+      const reply = await completeAiChat(provider, model, settings.apiKeys[provider.id], [
+        { role: 'system', content: systemPrompt },
+        ...parsed.data.messages
+      ]);
+      return res.json({ data: { role: 'assistant', content: reply, model: model.customName || model.name }, meta: { requestId: req.requestId } });
     } catch (error) {
       const code = error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
       return res.status(aiProbeErrorStatus[code] || 502).json({ error: { code, retryable: isAiProbeRetryable(error) }, meta: { requestId: req.requestId } });

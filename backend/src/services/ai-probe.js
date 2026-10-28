@@ -121,6 +121,60 @@ export async function probeAiModel(provider, model, apiKey) {
   return true;
 }
 
+export async function completeAiChat(provider, model, apiKey, messages) {
+  if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
+  let endpoint;
+  try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' });
+  }
+  if (endpoint.protocol !== 'https:') throw Object.assign(new Error(), { code: 'AI_TEST_INSECURE_ENDPOINT' });
+
+  const basePath = endpoint.pathname.replace(/\/+$/, '');
+  const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n');
+  const dialog = messages.filter((message) => message.role !== 'system');
+  let url;
+  let headers = { 'content-type': 'application/json', accept: 'application/json' };
+  let body;
+  if (provider.type === 'anthropic') {
+    const path = basePath.endsWith('/messages') ? basePath : `${basePath}/messages`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers = { ...headers, 'x-api-key': apiKey.trim(), 'anthropic-version': '2023-06-01' };
+    body = { model: model.name, max_tokens: 1200, system, messages: dialog, stream: false };
+  } else if (provider.type === 'gemini') {
+    const path = basePath.includes(':generateContent') ? basePath : `${basePath}/models/${encodeURIComponent(model.name)}:generateContent`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers['x-goog-api-key'] = apiKey.trim();
+    body = {
+      systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+      contents: dialog.map(({ role, content }) => ({ role: role === 'assistant' ? 'model' : 'user', parts: [{ text: content }] })),
+      generationConfig: { maxOutputTokens: 1200 }
+    };
+  } else {
+    const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers.authorization = `Bearer ${apiKey.trim()}`;
+    body = { model: model.name, messages, max_tokens: 1200, stream: false };
+  }
+
+  const address = await resolvePublicAddress(url.hostname);
+  const result = await postJson(url, headers, JSON.stringify(body), address);
+  if (result.status < 200 || result.status >= 300) {
+    throw Object.assign(new Error(), { code: responseError(result.status), retryable: result.status === 429 || result.status >= 500 });
+  }
+  let payload;
+  try { payload = JSON.parse(result.body); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' }); }
+  const text = provider.type === 'anthropic'
+    ? payload.content?.filter((part) => typeof part.text === 'string').map((part) => part.text).join('\n')
+    : provider.type === 'gemini'
+      ? payload.candidates?.[0]?.content?.parts?.filter((part) => typeof part.text === 'string').map((part) => part.text).join('\n')
+      : typeof payload.choices?.[0]?.message?.content === 'string'
+        ? payload.choices[0].message.content
+        : payload.choices?.[0]?.message?.content?.filter((part) => typeof part.text === 'string').map((part) => part.text).join('\n');
+  if (typeof text !== 'string' || !text.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' });
+  return text.trim();
+}
+
 export function isAiProbeRetryable(error) {
   return Boolean(error.retryable || ['AI_TEST_TIMEOUT', 'AI_TEST_NETWORK'].includes(error.code));
 }
