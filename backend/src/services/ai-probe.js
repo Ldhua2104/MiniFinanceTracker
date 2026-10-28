@@ -185,7 +185,7 @@ function geminiFunctionSchema(schema) {
   };
 }
 
-export async function requestAiToolCalls(provider, model, apiKey, messages, tools) {
+export async function requestAiToolCalls(provider, model, apiKey, messages, tools, { mode = 'required' } = {}) {
   if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
   let endpoint;
   try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
@@ -217,7 +217,7 @@ export async function requestAiToolCalls(provider, model, apiKey, messages, tool
         ]
       }) : ({ role, content })),
       tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
-      tool_choice: { type: 'any' }
+      tool_choice: mode === 'auto' ? { type: 'auto' } : { type: 'any' }
     };
   } else if (provider.type === 'gemini') {
     const path = basePath.includes(':generateContent') ? basePath : `${basePath}/models/${encodeURIComponent(model.name)}:generateContent`;
@@ -236,7 +236,7 @@ export async function requestAiToolCalls(provider, model, apiKey, messages, tool
         ]
       })),
       tools: [{ functionDeclarations: tools.map(({ name, description, parameters }) => ({ name, description, parameters: geminiFunctionSchema(parameters) })) }],
-      toolConfig: { functionCallingConfig: { mode: 'ANY' } },
+      toolConfig: { functionCallingConfig: { mode: mode === 'auto' ? 'AUTO' : 'ANY' } },
       generationConfig: { maxOutputTokens: 1200 }
     };
   } else {

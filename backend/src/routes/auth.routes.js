@@ -662,6 +662,7 @@ const assistantChatInput = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().trim().min(1).max(8000)
   }).strict()).min(1).max(40),
+  selectedAccountId: z.string().uuid().optional().default(''),
   language: z.enum(['zh', 'en']).optional().default('en')
 }).strict().superRefine(({ messages }, context) => {
   if (messages.at(-1)?.role !== 'user') context.addIssue({ code: 'custom', path: ['messages'], message: 'The latest chat message must come from the user' });
@@ -693,6 +694,7 @@ authRouter.get('/reports/monthly', requireUser, async (req, res, next) => {
 });
 
 function asksForMonthlyReport(messages) {
+  if (shouldPrepareTransactionDraft(messages)) return false;
   const userMessages = messages.filter((message) => message.role === 'user').map((message) => message.content);
   const latest = userMessages.at(-1) || '';
   const history = userMessages.slice(0, -1).join('\n');
@@ -732,6 +734,47 @@ function appendMonthlyReportToolResult(provider, messages, toolDecision, call, r
   return [...messages, callMessage, { role: 'tool', tool_call_id: call.id, content: result }];
 }
 
+const createTransactionTool = {
+  name: 'create_transaction',
+  description: 'Prepare an unsaved transaction draft for the user to review in the transaction editor. Call only when amount, currency, title, and transaction type are clear from the user conversation. Never save a transaction.',
+  parameters: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['expense', 'income'] },
+      amount: { type: 'string', pattern: '^\\d{1,16}(?:\\.\\d{1,2})?$' },
+      currency: { type: 'string', enum: CURRENCIES },
+      title: { type: 'string', minLength: 1, maxLength: 100 },
+      note: { type: 'string', maxLength: 500 },
+      categoryName: { type: 'string', maxLength: 80 },
+      accountId: { type: 'string', format: 'uuid' },
+      transactionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+    },
+    required: ['type', 'amount', 'currency', 'title'],
+    additionalProperties: false
+  }
+};
+
+const transactionCreateIntent = /(create|add|record|log|enter|prepare|draft)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:transaction|expense|income|purchase)|\b(?:create|add|record|log)\s+(?:this|that)\s+(?:transaction|expense|income|purchase)|\u5e2e\u6211.*(?:\u8bb0|\u521b\u5efa|\u6dfb\u52a0|\u5f55\u5165).*(?:\u6536\u652f|\u4ea4\u6613|\u6d88\u8d39|\u652f\u51fa|\u6536\u5165)|\u8bb0\u4e00\u7b14|\u521b\u5efa(?:\u4e00\u7b14)?\u6536\u652f|\u6dfb\u52a0(?:\u4e00\u7b14)?\u6536\u652f|\u8bb0\u5f55(?:\u4e00\u7b14)?(?:\u6d88\u8d39|\u652f\u51fa|\u6536\u5165)/i;
+const transactionDetailQuestion = /(amount|currency|title|expense or income|which account|\u91d1\u989d|\u5e01\u79cd|\u6807\u9898|\u652f\u51fa\u8fd8\u662f\u6536\u5165|\u54ea\u4e2a\u8d26\u6237)/i;
+
+function shouldPrepareTransactionDraft(messages) {
+  const userMessages = messages.filter((message) => message.role === 'user').map((message) => message.content);
+  if (transactionCreateIntent.test(userMessages.at(-1) || '')) return true;
+  const previousAssistant = messages.filter((message) => message.role === 'assistant').at(-1)?.content || '';
+  return transactionDetailQuestion.test(previousAssistant)
+    && userMessages.slice(-5, -1).some((content) => transactionCreateIntent.test(content));
+}
+
+function transactionClarification(language, fields = ['amount', 'currency', 'title', 'type']) {
+  const labels = language === 'zh'
+    ? { amount: '\u91d1\u989d', currency: '\u5e01\u79cd', title: '\u6807\u9898', type: '\u652f\u51fa\u8fd8\u662f\u6536\u5165' }
+    : { amount: 'amount', currency: 'currency', title: 'title', type: 'whether this is income or expense' };
+  const requested = [...new Set(fields)].map((field) => labels[field] || field);
+  return language === 'zh'
+    ? `\u521b\u5efa\u8349\u7a3f\u524d\uff0c\u8bf7\u786e\u8ba4\uff1a${requested.join('\u3001')}\u3002`
+    : `Before I prepare the draft, please confirm: ${requested.join(', ')}.`;
+}
+
 authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, next) => {
   try {
     const parsed = assistantChatInput.safeParse(req.body);
@@ -755,6 +798,8 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
       ...parsed.data.messages
     ];
     let report = null;
+    let transactionDraft = null;
+    let transactionDraftText = '';
     let toolUsage = null;
     let toolDecision = null;
     let reportToolCall = null;
@@ -792,6 +837,84 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
         const reportMonth = resolveReportMonth(lastUserMessage, timezone, argumentsResult.data.month);
         report = await getMonthlyReport(req.user._id, { month: reportMonth, timezone });
       }
+    } else if (shouldPrepareTransactionDraft(parsed.data.messages)) {
+      const [accounts, expenseCategories, budgets, incomeSources, profile] = await Promise.all([
+        Account.find({ userId: req.user._id }).select('id name currency').lean(),
+        Category.find({ userId: req.user._id, type: 'expense', archived: false }).select('id name').lean(),
+        Budget.find({ userId: req.user._id }).select('id categoryId name').lean(),
+        IncomeSource.find({ userId: req.user._id, archived: false }).select('id name').lean(),
+        UserProfile.findOne({ userId: req.user._id }).select('timezone').lean()
+      ]);
+      const choicesByType = {
+        expense: [
+          ...expenseCategories.filter((item) => ['none', 'other'].includes(item.name.trim().toLowerCase())),
+          ...budgets.map((budget) => ({ id: budget.categoryId, name: budget.name || expenseCategories.find((item) => item.id === budget.categoryId)?.name || '' }))
+        ],
+        income: incomeSources
+      };
+      for (const type of ['expense', 'income']) {
+        choicesByType[type] = [...new Map(choicesByType[type].filter((item) => item.id && item.name).map((item) => [item.id, item])).values()];
+      }
+      const selectedAccount = accounts.find((item) => item.id === parsed.data.selectedAccountId) || accounts[0] || null;
+      const timezone = profile?.timezone || 'UTC';
+      const currentDateParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const currentDate = `${currentDateParts.find((part) => part.type === 'year')?.value}-${currentDateParts.find((part) => part.type === 'month')?.value}-${currentDateParts.find((part) => part.type === 'day')?.value}`;
+      const toolMessages = [
+        { ...messages[0], content: `${messages[0].content}\n\nThe user asked to create a transaction. Prepare a draft only; never persist it. The user's selected interface language is ${parsed.data.language === 'zh' ? 'Simplified Chinese' : 'English'}; use it for the title, note, and any clarification. Current date in the user's timezone (${timezone}) is ${currentDate}. If the user does not name an account, use this selected account: ${JSON.stringify(selectedAccount)}. Available accounts: ${JSON.stringify(accounts)}. Available expense budgets/categories (use exact names; use Other when unclear): ${JSON.stringify(choicesByType.expense.map(({ id, name }) => ({ id, name })))}. Available income sources: ${JSON.stringify(choicesByType.income.map(({ id, name }) => ({ id, name })))}. Call create_transaction only when amount, currency, title, and income/expense type are all clear. Do not infer currency from the selected account or a symbol that is ambiguous; ask which currency if unclear. The note is optional; when present, keep it concise and format visible items one per line as item name*quantity line-total, then add merchant/platform only if known. If any required detail is unclear, ask a short question instead of calling the tool.` },
+        ...messages.slice(1)
+      ];
+      try {
+        toolDecision = await requestAiToolCalls(provider, model, settings.apiKeys[provider.id], toolMessages, [createTransactionTool], { mode: 'auto' });
+      } catch (error) {
+        const code = error.code === 'AI_TOOL_CALL_UNSUPPORTED' ? error.code : error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
+        console.warn(JSON.stringify({ event: 'assistant_tool_request_failed', requestId: req.requestId, tool: createTransactionTool.name, providerType: provider.type, model: model.name, code }));
+        return res.status(aiProbeErrorStatus[code] || 502).json({ error: { code, retryable: isAiProbeRetryable(error) }, meta: { requestId: req.requestId } });
+      }
+      toolUsage = toolDecision.usage;
+      const transactionToolCall = toolDecision.toolCalls.find((item) => item.name === createTransactionTool.name);
+      if (!transactionToolCall) {
+        transactionDraftText = toolDecision.text || transactionClarification(parsed.data.language);
+      } else {
+        let args = transactionToolCall.arguments;
+        if (typeof args === 'string') {
+          try { args = JSON.parse(args); } catch { args = null; }
+        }
+        const fields = [];
+        const type = ['expense', 'income'].includes(args?.type) ? args.type : '';
+        const amountIsValid = typeof args?.amount === 'string' && /^\d{1,16}(?:\.\d{1,2})?$/.test(args.amount) && new Decimal(args.amount).gt(0);
+        const currencyIsValid = CURRENCIES.includes(args?.currency);
+        const title = typeof args?.title === 'string' ? args.title.trim() : '';
+        if (!amountIsValid) fields.push('amount');
+        if (!currencyIsValid) fields.push('currency');
+        if (!title) fields.push('title');
+        if (!type) fields.push('type');
+        if (fields.length) {
+          transactionDraftText = transactionClarification(parsed.data.language, fields);
+        } else {
+          const dateCandidate = typeof args.transactionDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.transactionDate) ? args.transactionDate : currentDate;
+          const categoryName = typeof args.categoryName === 'string' ? args.categoryName.trim() : '';
+          const choices = choicesByType[type];
+          const fallbackCategory = choices.find((item) => item.name.trim().toLowerCase() === 'other') || choices[0];
+          const category = choices.find((item) => item.name.trim().toLowerCase() === categoryName.toLowerCase()) || fallbackCategory;
+          const requestedAccount = accounts.find((item) => item.id === args.accountId);
+          const targetAccount = requestedAccount || selectedAccount;
+          transactionDraft = {
+            type,
+            amount: args.amount,
+            currency: args.currency,
+            title: title.slice(0, 100),
+            note: typeof args.note === 'string' ? args.note.trim().slice(0, 500) : '',
+            categoryId: category?.id || '',
+            categoryName: category?.name || '',
+            accountId: targetAccount?.id || '',
+            transactionDate: dateCandidate
+          };
+          transactionDraftText = parsed.data.language === 'zh'
+            ? '\u6211\u5df2\u5c06\u6536\u652f\u8349\u7a3f\u586b\u5165\u53f3\u4fa7\u7f16\u8f91\u9762\u677f\uff0c\u8bf7\u6838\u5bf9\u540e\u624b\u52a8\u4fdd\u5b58\u3002'
+            : 'I filled the transaction draft in the editor on the right. Review it and save it manually when ready.';
+          console.info(JSON.stringify({ event: 'assistant_tool_selected', requestId: req.requestId, tool: createTransactionTool.name, providerType: provider.type, model: model.name }));
+        }
+      }
     }
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -804,7 +927,12 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
       res.flushHeaders();
       const sendUsage = (usage) => res.write(`event: usage\ndata: ${JSON.stringify({ ...usage, modelId: model.id, modelName: model.customName || model.name })}\n\n`);
       if (toolUsage) sendUsage(toolUsage);
-      if (report) {
+      if (transactionDraft) {
+        res.write(`event: transaction_draft\ndata: ${JSON.stringify({ draft: transactionDraft })}\n\n`);
+        res.write(`event: token\ndata: ${JSON.stringify({ text: transactionDraftText })}\n\n`);
+      } else if (transactionDraftText) {
+        res.write(`event: token\ndata: ${JSON.stringify({ text: transactionDraftText })}\n\n`);
+      } else if (report) {
         if (report.status === 'no_data') {
           res.write(`event: report\ndata: ${JSON.stringify({ report })}\n\n`);
           const text = parsed.data.language === 'zh'

@@ -21,7 +21,7 @@ function readConversations(storageKey) {
   }
 }
 
-export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, onContextChange }) {
+export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, selectedAccountId, onCreateTransactionDraft, onContextChange }) {
   const storageKey = `mini-finance.ai-conversations.v1${user?.id ? `.${user.id}` : '.anonymous'}`;
   const [storedConversations, setStoredConversations] = useState({ key: '', items: [] });
   const [selectedId, setSelectedId] = useState('');
@@ -135,7 +135,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     try {
       await apiStream('/auth/assistant/chat', {
         method: 'POST',
-        body: JSON.stringify({ messages: contextMessages, language })
+        body: JSON.stringify({ messages: contextMessages, language, selectedAccountId: selectedAccountId || '' })
       }, (event, data) => {
         if (event === 'token' && typeof data.text === 'string') {
           responseText += data.text;
@@ -148,6 +148,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
           responseReport = data.report;
           setStreamingReport(data.report);
         }
+        if (event === 'transaction_draft' && data.draft) onCreateTransactionDraft?.(data.draft);
       });
       const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, report: responseReport, createdAt: new Date().toISOString() };
       setStoredConversations((current) => ({

@@ -255,16 +255,23 @@ export function TransactionPanel({ items, count = items.length, categories, acco
   );
 }
 
-export function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, fx, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget, onCreateIncomeSource }) {
-  const [accountId, setAccountId] = useState(initialTransaction?.accountId ?? account?.id ?? accounts[0]?.id ?? '');
+export function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, draftTransaction, openedAt, fx, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget, onCreateIncomeSource }) {
+  const initialAccountId = initialTransaction?.accountId ?? draftTransaction?.accountId ?? account?.id ?? accounts[0]?.id ?? '';
+  const draftAccount = accounts.find((item) => item.id === initialAccountId) ?? account ?? accounts[0] ?? null;
+  const draftCurrency = draftTransaction?.currency;
+  const draftCents = draftTransaction ? moneyToCents(draftTransaction.amount) : null;
+  const draftConvertedCents = draftTransaction && draftAccount && draftCents !== null
+    ? (draftCurrency === draftAccount.currency ? draftCents : convertCents(draftCents, draftCurrency, draftAccount.currency, fx?.rates))
+    : null;
+  const [accountId, setAccountId] = useState(initialAccountId);
   const [accountPickerOpen, setAccountPickerOpen] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
-  const [type, setType] = useState(initialTransaction?.type ?? 'expense');
-  const [title, setTitle] = useState(initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || '');
-  const [amount, setAmount] = useState(initialTransaction?.amount ?? '');
-  const [note, setNote] = useState(initialTransaction?.note ?? '');
-  const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
-  const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
+  const [type, setType] = useState(initialTransaction?.type ?? draftTransaction?.type ?? 'expense');
+  const [title, setTitle] = useState(initialTransaction?.title || initialTransaction?.note || draftTransaction?.title || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || '');
+  const [amount, setAmount] = useState(initialTransaction?.amount ?? (draftTransaction ? draftConvertedCents === null ? '' : centsToAmount(draftConvertedCents) : ''));
+  const [note, setNote] = useState(initialTransaction?.note ?? draftTransaction?.note ?? '');
+  const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? draftTransaction?.categoryId ?? '');
+  const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? draftTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
   const [monthlyAuto, setMonthlyAuto] = useState(Boolean(initialTransaction?.recurring?.enabled));
   const [recurrenceSchedule, setRecurrenceSchedule] = useState(initialTransaction?.recurring?.schedule ?? 'month-start');
   const [recurrenceDay, setRecurrenceDay] = useState(String(initialTransaction?.recurring?.dayOfMonth ?? Number((initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today()).slice(-2))));
@@ -273,8 +280,12 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
   const [addingIncomeSource, setAddingIncomeSource] = useState(false);
   const [noteImages, setNoteImages] = useState(initialTransaction?.noteImages ?? (initialTransaction?.noteImage ? [initialTransaction.noteImage] : []));
   const [aiDraftOpen, setAiDraftOpen] = useState(false);
-  const [aiDraftNotice, setAiDraftNotice] = useState('');
-  const [recognizedAmount, setRecognizedAmount] = useState(null);
+  const [aiDraftNotice, setAiDraftNotice] = useState(draftTransaction && draftCurrency !== draftAccount?.currency
+    ? draftConvertedCents === null
+      ? t('aiDraftCurrencyRateUnavailable').replace('{currency}', draftCurrency || '').replace('{accountCurrency}', draftAccount?.currency || '')
+      : t('aiDraftCurrencyConverted').replace('{original}', formatCents(draftCents, language === 'zh' ? 'zh-CN' : 'en-US', draftCurrency)).replace('{converted}', formatCents(draftConvertedCents, language === 'zh' ? 'zh-CN' : 'en-US', draftAccount?.currency)).replace('{date}', `${fx?.date || t('unknownDate')}${fx?.stale ? ` (${t('ratesCached')})` : ''}`)
+    : draftTransaction ? t('aiDraftApplied') : '');
+  const [recognizedAmount, setRecognizedAmount] = useState(draftTransaction ? { amount: draftTransaction.amount, currency: draftCurrency, categoryMatched: true, rates: fx?.rates, rateDate: fx?.date, stale: fx?.stale } : null);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const isGeneratedOccurrence = Boolean(initialTransaction?.recurrenceSourceId);

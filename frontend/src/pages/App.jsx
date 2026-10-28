@@ -38,6 +38,7 @@ export function App() {
   const [editingBudget, setEditingBudget] = useState(null);
   const [editingIncomeSource, setEditingIncomeSource] = useState(null);
   const [editingTransaction, setEditingTransaction] = useState(null);
+  const [assistantTransactionDraft, setAssistantTransactionDraft] = useState(null);
   const [editorLoadVersion, setEditorLoadVersion] = useState(0);
   const [newTransactionTimestamp, setNewTransactionTimestamp] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
@@ -92,6 +93,7 @@ export function App() {
       setEditingBudget(null);
       setEditingIncomeSource(null);
       setEditingTransaction(null);
+      setAssistantTransactionDraft(null);
       setRightEditor(null);
       setPage('overview');
       setSaveStatus('saved');
@@ -135,7 +137,7 @@ export function App() {
   }, [user, page, assistantToolsOpen]);
 
   useEffect(() => {
-    if (page !== 'overview' && page !== 'activity' && page !== 'budgets' && page !== 'income') return undefined;
+    if (page !== 'overview' && page !== 'activity' && page !== 'budgets' && page !== 'income' && page !== 'assistant') return undefined;
     let active = true;
     setFx((current) => ({ ...current, status: 'loading' }));
     fetchLatestFxRates()
@@ -362,6 +364,7 @@ export function App() {
   function openTransactionEditor() {
     setRightRailCollapsed(false);
     setEditingTransaction(null);
+    setAssistantTransactionDraft(null);
     setEditorLoadVersion((version) => version + 1);
     setNewTransactionTimestamp(localTransactionTimestamp());
     setRightEditor('transaction');
@@ -370,6 +373,7 @@ export function App() {
   function openTransactionForEdit(transaction) {
     setRightRailCollapsed(false);
     setEditingTransaction(transaction);
+    setAssistantTransactionDraft(null);
     setNewTransactionTimestamp(null);
     setEditorLoadVersion((version) => version + 1);
     setRightEditor('edit-transaction');
@@ -379,13 +383,29 @@ export function App() {
     if (editingTransaction) updateTransaction(transaction);
     else addTransaction(transaction);
     setEditingTransaction(null);
+    setAssistantTransactionDraft(null);
     setRightEditor(null);
   }
 
   function removeTransaction(id) {
     deleteTransaction(id);
     setEditingTransaction(null);
+    setAssistantTransactionDraft(null);
     setRightEditor(null);
+  }
+
+  function openAssistantTransactionDraft(draft) {
+    const targetAccount = financeData.accounts.find((item) => item.id === draft.accountId)
+      ?? financeData.accounts.find((item) => item.id === selectedAccountId)
+      ?? financeData.accounts[0];
+    if (targetAccount) setSelectedAccountId(targetAccount.id);
+    setRightRailCollapsed(false);
+    setAssistantToolsOpen(false);
+    setEditingTransaction(null);
+    setAssistantTransactionDraft({ ...draft, id: crypto.randomUUID() });
+    setEditorLoadVersion((version) => version + 1);
+    setNewTransactionTimestamp(localTransactionTimestamp());
+    setRightEditor('transaction');
   }
 
   const saveLabel = saveStatus === 'failed' ? t('saveFailed') : saveStatus === 'saved' ? t('saved') : '…';
@@ -444,7 +464,7 @@ export function App() {
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} user={user} />
           ) : page === 'assistant' && user ? (
-            <AssistantPage user={user} t={t} language={language} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
+            <AssistantPage user={user} t={t} language={language} selectedAccountId={selectedAccountId} onCreateTransactionDraft={openAssistantTransactionDraft} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
@@ -465,7 +485,7 @@ export function App() {
           ) : rightEditor === 'income-source' ? (
             <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={financeData.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
-            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={financeData.accounts} categories={financeData.categories} budgets={financeData.budgets} user={user} t={t} language={language} timeFormat={timeFormat} fx={fx} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
+            <TransactionForm key={`${editingTransaction?.id ?? assistantTransactionDraft?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={financeData.accounts} categories={financeData.categories} budgets={financeData.budgets} user={user} t={t} language={language} timeFormat={timeFormat} fx={fx} initialTransaction={editingTransaction} draftTransaction={assistantTransactionDraft} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); setAssistantTransactionDraft(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
           ) : (
             <>
               <div className="right-card account-card">
