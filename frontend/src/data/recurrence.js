@@ -48,7 +48,7 @@ export function materializeDueRecurringTransactions(data, throughDate) {
             const exists = data.transactions.some((item) => item.recurrenceSourceId === transaction.id && item.recurrenceMonth === recurrenceMonth)
                 || additions.some((item) => item.recurrenceSourceId === transaction.id && item.recurrenceMonth === recurrenceMonth);
             if (!exists) {
-                const { noteImage, recurring: sourceRule, recurrenceSourceId, recurrenceMonth: sourceMonth, ...source } = transaction;
+                const { noteImage, noteImages, recurring: sourceRule, recurrenceSourceId, recurrenceMonth: sourceMonth, ...source } = transaction;
                 additions.push({
                     ...source,
                     id: crypto.randomUUID(),

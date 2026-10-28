@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { convertCents } from '../api/exchange-rates.js';
-import { centsToAmount, currencies, currencySymbol, formatSignedCents, formatTransactionTime, localTransactionTimestamp, moneyToCents, today } from '../utils/finance.js';
+import { convertCents, fetchLatestFxRates } from '../api/exchange-rates.js';
+import { centsToAmount, currencies, currencySymbol, formatCents, formatSignedCents, formatTransactionTime, localTransactionTimestamp, moneyToCents, today } from '../utils/finance.js';
 import { makeMonthlyRecurrence } from '../data/recurrence.js';
 import { PageTitle } from '../components/PageTitle.jsx';
 import { MonthlyReportCard } from '../components/MonthlyReport.jsx';
 import { incomeSourceLabel } from '../utils/income.js';
 import { budgetColors } from '../utils/colors.js';
 import { apiRequest } from '../api/client.js';
+import { TransactionAiDraftModal } from '../components/TransactionAiDraftModal.jsx';
+
+const MAX_TRANSACTION_IMAGES = 4;
+const MAX_TRANSACTION_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function amountFromCents(value) {
   return Number(value) / 100;
@@ -251,11 +255,14 @@ export function TransactionPanel({ items, count = items.length, categories, acco
   );
 }
 
-export function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget, onCreateIncomeSource }) {
+export function TransactionForm({ account, accounts, categories, budgets, user, t, language, timeFormat, initialTransaction, openedAt, fx, onSubmit, onDelete, onCancel, onCreateAccount, onCreateBudget, onCreateIncomeSource }) {
   const [accountId, setAccountId] = useState(initialTransaction?.accountId ?? account?.id ?? accounts[0]?.id ?? '');
   const [accountPickerOpen, setAccountPickerOpen] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
   const [type, setType] = useState(initialTransaction?.type ?? 'expense');
+  const [title, setTitle] = useState(initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || '');
+  const [amount, setAmount] = useState(initialTransaction?.amount ?? '');
+  const [note, setNote] = useState(initialTransaction?.note ?? '');
   const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? '');
   const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
   const [monthlyAuto, setMonthlyAuto] = useState(Boolean(initialTransaction?.recurring?.enabled));
@@ -264,7 +271,10 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
   const [recurrenceTime, setRecurrenceTime] = useState(initialTransaction?.recurring?.time ?? initialTransaction?.transactionTime ?? openedAt?.transactionTime ?? '09:00');
   const [addingBudget, setAddingBudget] = useState(false);
   const [addingIncomeSource, setAddingIncomeSource] = useState(false);
-  const [noteImage, setNoteImage] = useState(initialTransaction?.noteImage ?? '');
+  const [noteImages, setNoteImages] = useState(initialTransaction?.noteImages ?? (initialTransaction?.noteImage ? [initialTransaction.noteImage] : []));
+  const [aiDraftOpen, setAiDraftOpen] = useState(false);
+  const [aiDraftNotice, setAiDraftNotice] = useState('');
+  const [recognizedAmount, setRecognizedAmount] = useState(null);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const isGeneratedOccurrence = Boolean(initialTransaction?.recurrenceSourceId);
@@ -296,22 +306,48 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
   const weekday = transactionDate ? new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long' }).format(new Date(`${transactionDate}T12:00:00`)) : '';
 
   function chooseNoteImage(event) {
-    const file = event.target.files?.[0];
+    const files = [...(event.target.files ?? [])];
     event.target.value = '';
-    if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+    if (!files.length) return;
+    if (noteImages.length + files.length > MAX_TRANSACTION_IMAGES) {
+      setError(t('aiDraftImageLimit'));
+      return;
+    }
+    if (files.some((file) => !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > MAX_TRANSACTION_IMAGE_BYTES)) {
       setError(t('imageTypeError'));
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setNoteImage(reader.result);
-        setError('');
-      }
-    };
-    reader.onerror = () => setError(t('imageTypeError'));
-    reader.readAsDataURL(file);
+    Promise.all(files.map((file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('invalid image'));
+      reader.onerror = () => reject(new Error('invalid image'));
+      reader.readAsDataURL(file);
+    }))).then((images) => {
+      setNoteImages((current) => [...current, ...images]);
+      setError('');
+    }).catch(() => setError(t('imageTypeError')));
+  }
+
+  function setSelectedAccount(nextAccount) {
+    setAccountId(nextAccount.id);
+    if (!recognizedAmount) return;
+    if (!recognizedAmount.currency || recognizedAmount.currency === 'unknown') {
+      setAmount('');
+      setAiDraftNotice(t('aiDraftCurrencyUnknown'));
+      return;
+    }
+    const cents = moneyToCents(recognizedAmount.amount);
+    const converted = recognizedAmount.currency === nextAccount.currency
+      ? cents
+      : cents === null ? null : convertCents(cents, recognizedAmount.currency, nextAccount.currency, recognizedAmount.rates || fx?.rates);
+    setAmount(converted === null ? '' : centsToAmount(converted));
+    if (recognizedAmount.currency !== nextAccount.currency) {
+      setAiDraftNotice(converted === null
+        ? t('aiDraftCurrencyRateUnavailable').replace('{currency}', recognizedAmount.currency).replace('{accountCurrency}', nextAccount.currency)
+        : t('aiDraftCurrencyConverted').replace('{original}', formatCents(cents, language === 'zh' ? 'zh-CN' : 'en-US', recognizedAmount.currency)).replace('{converted}', formatCents(converted, language === 'zh' ? 'zh-CN' : 'en-US', nextAccount.currency)).replace('{date}', `${recognizedAmount.rateDate || fx?.date || t('unknownDate')}${recognizedAmount.stale ? ` (${t('ratesCached')})` : ''}`));
+    } else {
+      setAiDraftNotice(recognizedAmount.categoryMatched ? t('aiDraftApplied') : t('aiDraftCategoryFallback'));
+    }
   }
 
   async function submit(event) {
@@ -344,14 +380,16 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
     setError('');
     setWorking(true);
     try {
-      let noteImagePath = '';
-      if (user && noteImage.startsWith('data:')) {
-        const upload = await apiRequest('/auth/transaction-images', {
-          method: 'POST', body: JSON.stringify({ image: noteImage })
-        });
-        noteImagePath = upload.data.path;
-      } else if (user) {
-        noteImagePath = noteImage;
+      const savedNoteImages = [];
+      if (user) {
+        for (const image of noteImages) {
+          if (image.startsWith('data:')) {
+            const upload = await apiRequest('/auth/transaction-images', { method: 'POST', body: JSON.stringify({ image }) });
+            savedNoteImages.push(upload.data.path);
+          } else {
+            savedNoteImages.push(image);
+          }
+        }
       }
       onSubmit({
         id: initialTransaction?.id ?? crypto.randomUUID(), type, amount: centsToAmount(cents), currency: selectedAccount.currency,
@@ -360,10 +398,10 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
         transactionDate, transactionTime, note: String(form.get('note') ?? '').trim(),
         ...(recurring ? { recurring } : {}),
         ...(initialTransaction?.recurrenceSourceId ? { recurrenceSourceId: initialTransaction.recurrenceSourceId, recurrenceMonth: initialTransaction.recurrenceMonth } : {}),
-        ...(user && noteImagePath ? { noteImage: noteImagePath } : {})
+        ...(user && savedNoteImages.length ? { noteImages: savedNoteImages } : {})
       });
       formElement.reset();
-      setNoteImage('');
+      setNoteImages([]);
     } catch (submitError) {
       setError(submitError.message || t('saveFailed'));
     } finally {
@@ -371,25 +409,54 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
     }
   }
 
+  async function applyAiDraft(result) {
+    const draft = result.draft;
+    let exchange = fx;
+    const recognizedCurrency = currencies.includes(draft.currency) ? draft.currency : '';
+    if (recognizedCurrency && recognizedCurrency !== selectedAccount.currency && !exchange?.rates) {
+      try { exchange = await fetchLatestFxRates(); } catch { /* Leave the amount blank when no rate is available. */ }
+    }
+    const nativeCents = moneyToCents(draft.amount);
+    const convertedCents = !recognizedCurrency ? null : recognizedCurrency === selectedAccount.currency || nativeCents === null
+      ? nativeCents
+      : convertCents(nativeCents, recognizedCurrency, selectedAccount.currency, exchange?.rates);
+    setTitle(draft.title);
+    setAmount(convertedCents === null ? '' : centsToAmount(convertedCents));
+    setType(draft.type);
+    setCategoryId(draft.categoryId);
+    setTransactionDate(draft.transactionDate || today());
+    setNote(draft.note);
+    setRecognizedAmount({ amount: draft.amount, currency: recognizedCurrency || 'unknown', categoryMatched: result.categoryMatched, rates: exchange?.rates, rateDate: exchange?.date, stale: exchange?.stale });
+    setNoteImages((current) => [...current, ...result.addedImages]);
+    setAiDraftNotice(!recognizedCurrency
+      ? t('aiDraftCurrencyUnknown')
+      : recognizedCurrency !== selectedAccount.currency
+      ? convertedCents === null
+        ? t('aiDraftCurrencyRateUnavailable').replace('{currency}', recognizedCurrency).replace('{accountCurrency}', selectedAccount.currency)
+        : t('aiDraftCurrencyConverted').replace('{original}', formatCents(nativeCents, language === 'zh' ? 'zh-CN' : 'en-US', recognizedCurrency)).replace('{converted}', formatCents(convertedCents, language === 'zh' ? 'zh-CN' : 'en-US', selectedAccount.currency)).replace('{date}', `${exchange?.date || t('unknownDate')}${exchange?.stale ? ` (${t('ratesCached')})` : ''}`)
+      : !result.categoryMatched ? t('aiDraftCategoryFallback') : t('aiDraftApplied'));
+    setAiDraftOpen(false);
+  }
+
   return (
     <section className="panel side-editor transaction-editor">
       <div className="editor-heading"><div className="editor-heading-title"><div className="eyebrow">{t('activity')}</div><h2>{initialTransaction ? t('editTransaction') : t('newTransaction')}</h2></div><div className="editor-heading-side"><div className="editor-time"><strong>{formatTransactionTime(transactionTime, timeFormat, language)}</strong></div></div></div>
       <button className="icon-button close-editor" onClick={onCancel} aria-label={t('close')}>×</button>
-      {!selectedAccount ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" type="button" onClick={() => setAddingAccount(true)}>{t('createFirstAccount')}</button>{addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); }} />}</div> : <>
+      {!selectedAccount ? <div className="empty-editor"><p>{t('chooseAccountFirst')}</p><button className="primary-button" type="button" onClick={() => setAddingAccount(true)}>{t('createFirstAccount')}</button>{addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setSelectedAccount(newAccount); setAddingAccount(false); }} />}</div> : <>
         <div className="transaction-account-switcher">
           <button className="editing-account account-switch-trigger" type="button" aria-expanded={accountPickerOpen} onClick={() => { setAccountPickerOpen((current) => !current); setAddingAccount(false); }}>
             <span className="account-glyph">{selectedAccount.name.slice(0, 1).toUpperCase()}</span><span className="editing-account-copy"><strong>{selectedAccount.name}</strong><small>{selectedAccount.currency}</small></span><svg className={`budget-expand-mark account-switch-chevron ${accountPickerOpen ? 'is-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
           </button>
           {accountPickerOpen && <div className="transaction-account-options" role="group" aria-label={t('account')}>
-            {accounts.map((item) => <button key={item.id} type="button" className={`transaction-account-option ${item.id === selectedAccount.id ? 'selected' : ''}`} aria-pressed={item.id === selectedAccount.id} onClick={() => { setAccountId(item.id); setAccountPickerOpen(false); }}><strong>{item.name}</strong><small>{item.currency}</small></button>)}
+            {accounts.map((item) => <button key={item.id} type="button" className={`transaction-account-option ${item.id === selectedAccount.id ? 'selected' : ''}`} aria-pressed={item.id === selectedAccount.id} onClick={() => { setSelectedAccount(item); setAccountPickerOpen(false); }}><strong>{item.name}</strong><small>{item.currency}</small></button>)}
             <button type="button" className="transaction-account-option transaction-account-add" aria-label={t('addAccount')} title={t('addAccount')} onClick={() => setAddingAccount(true)}>+</button>
           </div>}
-          {addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setAccountId(newAccount.id); setAddingAccount(false); setAccountPickerOpen(false); }} />}
+          {addingAccount && <AccountForm embedded t={t} onCancel={() => setAddingAccount(false)} onSubmit={(newAccount) => { onCreateAccount(newAccount); setSelectedAccount(newAccount); setAddingAccount(false); setAccountPickerOpen(false); }} />}
         </div>
         <form onSubmit={submit}>
           <label className="field"><span>{t('type')}</span><div className="segmented-control"><button type="button" className={type === 'expense' ? 'active' : ''} onClick={() => { setType('expense'); setCategoryId(''); setAddingBudget(false); setAddingIncomeSource(false); }}>{t('expenseType')}</button><button type="button" className={type === 'income' ? 'active' : ''} onClick={() => { setType('income'); setCategoryId(''); setAddingBudget(false); }}>{t('incomeType')}</button></div></label>
-          <label className="field"><span>{t('titleLabel')}</span><input name="title" type="text" maxLength="100" defaultValue={initialTransaction?.title || initialTransaction?.note || categories.find((item) => item.id === initialTransaction?.categoryId)?.name || ''} required autoFocus /></label>
-          <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><span>{currencySymbol(selectedAccount.currency)}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" defaultValue={initialTransaction?.amount ?? ''} required /></div></label>
+          <label className="field"><span>{t('titleLabel')}</span><small>{t('transactionTitleHint')}</small><input name="title" type="text" maxLength="100" value={title} onChange={(event) => setTitle(event.target.value)} required autoFocus /></label>
+          <label className="field"><span>{t('amount')}</span><div className="transaction-amount-input"><span>{currencySymbol(selectedAccount.currency)}</span><input name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" value={amount} onChange={(event) => { setAmount(event.target.value); setRecognizedAmount(null); setAiDraftNotice(''); }} required /></div></label>
           <div className="field"><span>{type === 'expense' ? t('budgets') : t('source')}</span><div className="category-chip-list" role="group" aria-label={type === 'expense' ? t('budgets') : t('source')}>
             {choices.map((item) => <button key={item.id} type="button" className={`category-chip ${selectedCategoryId === item.id ? 'selected' : ''}`} aria-pressed={selectedCategoryId === item.id} onClick={() => setCategoryId(item.id)}>{type === 'income' ? incomeSourceLabel(item.name, t) : item.name}</button>)}
             {type === 'expense' && <button type="button" className="category-chip category-add-chip" aria-label={t('addBudget')} title={t('addBudget')} onClick={() => setAddingBudget((current) => !current)}>+</button>}
@@ -407,15 +474,18 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
               <small>{t('monthlyAutoAddHint')}</small>
             </div>}
           </div>}
-          <label className="field"><span>{t('note')}</span><input name="note" type="text" maxLength="500" defaultValue={initialTransaction?.note ?? ''} /></label>
-          {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImage ? t('changeImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={chooseNoteImage} /></label>{noteImage && <div className="note-image-preview"><img src={noteImage} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImage('')}>{t('removeImage')}</button></div>}</div>}
+          <label className="field"><span>{t('note')}</span><small>{t('transactionNoteHint')}</small><textarea name="note" rows="3" maxLength="500" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+          {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImages.length ? t('addImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={chooseNoteImage} /></label>{noteImages.length > 0 && <div className="note-image-preview">{noteImages.map((image, index) => <div className="note-image-preview-item" key={`${index}-${image.slice(0, 30)}`}><img src={image} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}>{t('removeImage')}</button></div>)}</div>}<small>{t('aiDraftImageLimit')}</small></div>}
           {error && <div className="inline-error">{error}</div>}
+          {aiDraftNotice && <div className="ai-draft-notice" role="status">{aiDraftNotice}</div>}
           <div className="transaction-form-actions">
+            {user && !initialTransaction && <button className="secondary-button ai-draft-trigger" type="button" onClick={() => { setAiDraftNotice(''); setAiDraftOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 13.8 9l6.4 2-6.4 2-1.8 6.5L10.2 13 3.8 11l6.4-2L12 2.5Z" /><path d="m19 15 .9 2.7 2.6.8-2.6.8L19 22l-.8-2.7-2.7-.8 2.7-.8L19 15Z" /></svg>{t('aiDraftButton')}</button>}
             <button className="primary-button" type="submit" disabled={working}>{working ? '?' : initialTransaction ? t('updateTransaction') : t('save')} <span>{initialTransaction ? '↻' : '+'}</span></button>
             {initialTransaction && <button className="delete-transaction-button" type="button" onClick={() => confirmDeleteTransaction(initialTransaction.id, t, onDelete)} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 3v6m4-6v6" /></svg><span>{t('delete')}</span></button>}
           </div>
         </form>
       </>}
+      {aiDraftOpen && user && selectedAccount && <TransactionAiDraftModal noteImages={noteImages} account={selectedAccount} type={type} language={language} t={t} onClose={() => setAiDraftOpen(false)} onDraft={applyAiDraft} />}
     </section>
   );
 }
@@ -434,6 +504,7 @@ export function TransactionList({ items, categories, accounts = [], t, language,
     const category = categoryMap.get(item.categoryId);
     return category ? (item.type === 'income' ? incomeSourceLabel(category.name, t) : category.name) : undefined;
   };
+  const transactionImages = (item) => item.noteImages?.length ? item.noteImages : (item.noteImage ? [item.noteImage] : []);
   const groups = items.reduce((result, item) => {
     const last = result[result.length - 1];
     if (last?.date === item.transactionDate) last.items.push(item);
@@ -461,7 +532,7 @@ export function TransactionList({ items, categories, accounts = [], t, language,
         {group.items.map((item) => <article className={`transaction-row ${tooltipId === item.id ? 'tooltip-visible' : ''}`} key={item.id} role="button" tabIndex={0} onMouseEnter={() => startTooltip(item.id)} onMouseLeave={stopTooltip} onClick={() => onEdit(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEdit(item); } }}>
           <div className="transaction-info">
             <strong>{item.title || item.note || transactionCategoryName(item) || '\u2014'}</strong>
-            {item.noteImage && <img className="transaction-note-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
+            {transactionImages(item).length > 0 && <div className="transaction-note-images">{transactionImages(item).map((image, index) => <img className="transaction-note-image" key={`${item.id}-${index}`} src={image} alt={t('noteImage')} loading="lazy" />)}</div>}
             <div className="transaction-meta-tags">
               {item.transactionTime && <span className="transaction-time-tag">{formatTransactionTime(item.transactionTime, timeFormat, language)}</span>}
               {accountMap.get(item.accountId) && <span className="transaction-tag account-tag">{accountMap.get(item.accountId)}</span>}
@@ -481,7 +552,7 @@ export function TransactionList({ items, categories, accounts = [], t, language,
               <span className="transaction-tooltip-meta-right">{accountMap.get(item.accountId) || '\u2014'} · {transactionCategoryName(item) || '\u2014'}</span>
             </div>
             {item.note && <p>{item.note}</p>}
-            {item.noteImage && <img className="transaction-tooltip-image" src={item.noteImage} alt={t('noteImage')} loading="lazy" />}
+            {transactionImages(item).length > 0 && <div className="transaction-tooltip-images">{transactionImages(item).map((image, index) => <img className="transaction-tooltip-image" key={`${item.id}-tooltip-${index}`} src={image} alt={t('noteImage')} loading="lazy" />)}</div>}
           </div>}
         </article>)}
       </section>)}

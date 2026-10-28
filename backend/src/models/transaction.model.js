@@ -15,6 +15,7 @@ const transactionSchema = new mongoose.Schema({
   transactionTime: { type: String, default: '', match: /^$|^(?:[01]\d|2[0-3]):[0-5]\d$/ },
   note: { type: String, default: '', maxlength: 500 },
   noteImage: { type: String, default: '', maxlength: 180, match: /^$|^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i },
+  noteImages: { type: [String], default: [], validate: { validator: (images) => images.length <= 4 && images.every((image) => /^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i.test(image)), message: 'Transaction images must be valid uploaded image paths' } },
   recurring: { enabled: Boolean, schedule: { type: String, enum: ['month-start', 'month-end', 'same-day', 'custom'] }, dayOfMonth: { type: Number, min: 1, max: 31 }, time: String, nextRunDate: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ } },
   recurrenceSourceId: { type: String, maxlength: 80 },
   recurrenceMonth: { type: String, match: /^\d{4}-(0[1-9]|1[0-2])$/ },

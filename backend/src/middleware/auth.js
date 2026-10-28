@@ -62,6 +62,11 @@ export async function requireUser(req, res, next) {
   try {
     const user = await User.findById(payload.sub);
     if (!user || user.status !== 'active' || user.sessionVersion !== payload.sv) return unauthorized(res, req);
+    // Keep active sessions alive. Both cookies use the same idle lifetime, so
+    // renew the CSRF cookie with its existing value when one is present.
+    res.cookie(SESSION_COOKIE, signSession(user), sessionCookieOptions());
+    const csrfToken = req.cookies?.[CSRF_COOKIE];
+    if (csrfToken) res.cookie(CSRF_COOKIE, csrfToken, csrfCookieOptions());
     req.user = user;
     return next();
   } catch (error) {

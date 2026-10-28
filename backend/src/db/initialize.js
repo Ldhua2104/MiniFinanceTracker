@@ -28,7 +28,7 @@ const definitions = [
     userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, categoryId: { bsonType: 'string', maxLength: 80 }, accountId: { bsonType: ['string', 'null'] }, type: { enum: ['income', 'expense'] },
     amount: { bsonType: 'string', pattern: '^\\d{1,16}(?:\\.\\d{1,2})?$' }, currency: { enum: ['USD', 'EUR', 'CNY', 'GBP'] }, transactionDate: { bsonType: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     transactionTime: { bsonType: 'string', pattern: '^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$' }, title: { bsonType: 'string', maxLength: 100 }, note: { bsonType: 'string', maxLength: 500 },
-    noteImage: { bsonType: 'string', maxLength: 180 }, recurring: { bsonType: 'object' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
+    noteImage: { bsonType: 'string', maxLength: 180 }, noteImages: { bsonType: 'array', maxItems: 4, items: { bsonType: 'string', maxLength: 180 } }, recurring: { bsonType: 'object' }, sortOrder: { bsonType: ['int', 'long', 'double'], minimum: 0 }
   } }],
   [Budget, { bsonType: 'object', required: ['userId', 'id', 'name', 'categoryId', 'amount', 'currency', 'color'], properties: {
     userId: { bsonType: 'objectId' }, id: { bsonType: 'string', maxLength: 80 }, name: { bsonType: 'string', maxLength: 60 }, categoryId: { bsonType: 'string', maxLength: 80 },

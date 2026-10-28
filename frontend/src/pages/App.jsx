@@ -82,6 +82,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    function handleSessionExpired() {
+      setUser(null);
+      setRole(APP_ROLES.anonymous);
+      setFinanceData(loadAnonymousData());
+      setFinanceDataReady(true);
+      setMigration(null);
+      setEditingAccount(null);
+      setEditingBudget(null);
+      setEditingIncomeSource(null);
+      setEditingTransaction(null);
+      setRightEditor(null);
+      setPage('overview');
+      setSaveStatus('saved');
+    }
+    window.addEventListener('auth:expired', handleSessionExpired);
+    return () => window.removeEventListener('auth:expired', handleSessionExpired);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('mini-finance.theme', theme);
   }, [theme]);
@@ -116,7 +135,7 @@ export function App() {
   }, [user, page, assistantToolsOpen]);
 
   useEffect(() => {
-    if (page !== 'activity' && page !== 'budgets' && page !== 'income') return undefined;
+    if (page !== 'overview' && page !== 'activity' && page !== 'budgets' && page !== 'income') return undefined;
     let active = true;
     setFx((current) => ({ ...current, status: 'loading' }));
     fetchLatestFxRates()
@@ -446,7 +465,7 @@ export function App() {
           ) : rightEditor === 'income-source' ? (
             <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={financeData.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
-            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={financeData.accounts} categories={financeData.categories} budgets={financeData.budgets} user={user} t={t} language={language} timeFormat={timeFormat} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
+            <TransactionForm key={`${editingTransaction?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={financeData.accounts} categories={financeData.categories} budgets={financeData.budgets} user={user} t={t} language={language} timeFormat={timeFormat} fx={fx} initialTransaction={editingTransaction} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
           ) : (
             <>
               <div className="right-card account-card">

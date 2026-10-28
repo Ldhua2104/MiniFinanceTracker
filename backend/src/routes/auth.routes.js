@@ -22,12 +22,17 @@ authRouter.use((_req, res, next) => {
 });
 const userStorageRoot = fileURLToPath(new URL('../../storage/users/', import.meta.url));
 const assistantPromptFile = fileURLToPath(new URL('../prompts/assistant-system.md', import.meta.url));
+const transactionDraftPromptFile = fileURLToPath(new URL('../prompts/transaction-draft-system.md', import.meta.url));
 const userStorageDirectory = (userId, area) => path.join(userStorageRoot, String(userId), area);
 const avatarPathPattern = /^\/api\/v1\/auth\/avatars\/([a-f\d-]{36})\.(png|jpg|webp|gif)$/i;
 const transactionImageInput = z.object({
   image: z.string().max(Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 32).regex(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/)
 }).strict();
 const transactionImagePath = z.string().max(180).regex(/^\/api\/v1\/auth\/transaction-images\/[a-f\d-]{36}\.(?:png|jpg|webp|gif)$/i);
+const transactionDraftImage = z.string()
+  .max(Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 32)
+  .regex(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/)
+  .refine((value) => Buffer.from(value.slice(value.indexOf(',') + 1), 'base64').length <= MAX_IMAGE_BYTES);
 const loginInput = z.object({
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   password: z.string().min(1).max(128)
@@ -93,6 +98,7 @@ const workspaceInput = z.object({
     categoryId: z.string().min(1).max(80), transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     transactionTime: z.string().regex(/^$|^(?:[01]\d|2[0-3]):[0-5]\d$/).optional().default(''),
     note: z.string().max(500).default(''), noteImage: z.union([z.literal(''), transactionImagePath]).optional().default(''),
+    noteImages: z.array(transactionImagePath).max(4).optional(),
     accountId: z.string().min(1).max(80).nullable().optional(), recurring: recurringInput.optional(),
     recurrenceSourceId: z.string().min(1).max(80).optional(), recurrenceMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional()
   }).strict()).max(10000),
@@ -509,6 +515,148 @@ authRouter.post('/ai-settings/test', requireCsrf, requireUser, async (req, res, 
   } catch (error) { sendAiSettingsError(error, req, res, next); }
 });
 
+const transactionDraftInput = z.object({
+  accountId: z.string().uuid(),
+  type: z.enum(['expense', 'income']),
+  language: z.enum(['zh', 'en']).default('en'),
+  prompt: z.string().trim().max(3000).default(''),
+  existingImages: z.array(z.union([transactionImagePath, transactionDraftImage])).max(4).default([]),
+  images: z.array(transactionDraftImage).max(4).default([])
+}).strict().superRefine((value, context) => {
+  if (value.images.length + value.existingImages.length > 4) context.addIssue({ code: 'custom', path: ['images'], message: 'Attach up to four images' });
+  if (!value.prompt && !value.existingImages.length && !value.images.length) context.addIssue({ code: 'custom', path: ['images'], message: 'Add a prompt or image' });
+});
+
+const transactionDraftTool = {
+  name: 'fill_transaction_draft',
+  description: 'Extract one transaction from the provided user text and receipt images. Return fields for an editable draft only; do not save anything.',
+  parameters: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', maxLength: 100, description: 'A natural, human-readable transaction title. Exclude receipt numbers, order numbers, authorization codes, and long IDs.' },
+      type: { type: 'string', enum: ['expense', 'income'] },
+      amount: { type: 'string', pattern: '^$|^\\d{1,12}(?:\\.\\d{1,2})?$', description: 'Original receipt amount, without conversion. Leave empty if unclear.' },
+      currency: { type: 'string', enum: [...CURRENCIES, 'unknown'], description: 'Currency printed on the receipt; use unknown if not clear. Do not convert.' },
+      transactionDate: { type: 'string', pattern: '^$|^\\d{4}-\\d{2}-\\d{2}$' },
+      note: { type: 'string', maxLength: 500, description: 'Concrete purchase details such as items, platform, and merchant.' },
+      categoryName: { type: 'string', maxLength: 80 }
+    },
+    required: ['title', 'type', 'amount', 'currency', 'transactionDate', 'note', 'categoryName'],
+    additionalProperties: false
+  }
+};
+
+authRouter.post('/assistant/transaction-draft', requireCsrf, requireUser, async (req, res, next) => {
+  try {
+    const parsed = transactionDraftInput.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'AI_DRAFT_INVALID_INPUT', fields: z.flattenError(parsed.error).fieldErrors }, meta: { requestId: req.requestId } });
+    const input = parsed.data;
+    const account = await Account.findOne({ userId: req.user._id, id: input.accountId }).select('id name currency').lean();
+    if (!account) return res.status(400).json({ error: { code: 'AI_DRAFT_ACCOUNT_NOT_FOUND' }, meta: { requestId: req.requestId } });
+
+    const settings = await readAiSettings(req.user._id);
+    const modelId = settings.assignments?.receipt;
+    if (!modelId) return res.status(400).json({ error: { code: 'AI_TEST_ASSIGNMENT_MISSING' }, meta: { requestId: req.requestId } });
+    const model = settings.models.find((item) => item.id === modelId);
+    if (!model) return res.status(400).json({ error: { code: 'AI_TEST_MODEL_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    const provider = settings.providers.find((item) => item.id === model.providerId);
+    if (!provider) return res.status(400).json({ error: { code: 'AI_TEST_PROVIDER_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    if (!settings.apiKeys[provider.id]) return res.status(400).json({ error: { code: 'AI_TEST_KEY_MISSING' }, meta: { requestId: req.requestId } });
+
+    const [prompt, profile, expenseCategories, budgets, incomeSources] = await Promise.all([
+      readFile(transactionDraftPromptFile, 'utf8'),
+      UserProfile.findOne({ userId: req.user._id }).select('timezone').lean(),
+      Category.find({ userId: req.user._id, type: 'expense', archived: false }).select('id name').lean(),
+      Budget.find({ userId: req.user._id }).select('id categoryId name').lean(),
+      IncomeSource.find({ userId: req.user._id, archived: false }).select('id name').lean()
+    ]);
+    const choicesByType = {
+      expense: [
+        ...expenseCategories.filter((category) => ['none', 'other'].includes(category.name.trim().toLowerCase())),
+        ...budgets.map((budget) => ({ id: budget.categoryId, name: budget.name || expenseCategories.find((category) => category.id === budget.categoryId)?.name || '' }))
+      ],
+      income: incomeSources
+    };
+    for (const type of ['expense', 'income']) {
+      choicesByType[type] = [...new Map(choicesByType[type].filter((choice) => choice.id && choice.name).map((choice) => [choice.id, choice])).values()];
+    }
+    const currentDateParts = new Intl.DateTimeFormat('en-US', { timeZone: profile?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const currentDate = `${currentDateParts.find((part) => part.type === 'year')?.value}-${currentDateParts.find((part) => part.type === 'month')?.value}-${currentDateParts.find((part) => part.type === 'day')?.value}`;
+    const imageDataUrls = [];
+    const validateImage = (dataUrl) => {
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+      if (!match) throw Object.assign(new Error('Invalid image'), { code: 'AI_DRAFT_INVALID_IMAGE' });
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > MAX_IMAGE_BYTES || !imageSignatureIsValid(match[1], buffer)) throw Object.assign(new Error('Invalid image'), { code: 'AI_DRAFT_INVALID_IMAGE' });
+      return `data:${match[1]};base64,${match[2]}`;
+    };
+    for (const existingImage of input.existingImages) {
+      if (existingImage.startsWith('data:')) {
+        imageDataUrls.push(validateImage(existingImage));
+        continue;
+      }
+      const filename = existingImage.split('/').at(-1);
+      const buffer = await readFile(path.join(userStorageDirectory(req.user.id, 'uploads'), filename));
+      if (buffer.length > MAX_IMAGE_BYTES) return res.status(400).json({ error: { code: 'AI_DRAFT_INVALID_IMAGE' }, meta: { requestId: req.requestId } });
+      const extension = path.extname(filename).toLowerCase();
+      const mime = extension === '.jpg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
+      if (!imageSignatureIsValid(mime, buffer)) return res.status(400).json({ error: { code: 'AI_DRAFT_INVALID_IMAGE' }, meta: { requestId: req.requestId } });
+      imageDataUrls.push(`data:${mime};base64,${buffer.toString('base64')}`);
+    }
+    input.images.forEach((image) => imageDataUrls.push(validateImage(image)));
+
+    let systemPrompt = prompt.replace(/^\uFEFF/, '').trim();
+    if (!systemPrompt) return res.status(503).json({ error: { code: 'AI_DRAFT_PROMPT_UNAVAILABLE' }, meta: { requestId: req.requestId } });
+    systemPrompt += `\n\nUser interface language: ${input.language === 'zh' ? 'Simplified Chinese' : 'English'}. Write the title and note in this language, even if the receipt uses another language. Current date: ${currentDate}. Selected transaction type: ${input.type}; only change it if the user explicitly requests another type. Selected account: ${account.name}, currency ${account.currency}. Existing expense budget choices (use exact names): ${JSON.stringify(choicesByType.expense.map(({ name }) => name))}. Existing income source choices (use exact names): ${JSON.stringify(choicesByType.income.map(({ name }) => name))}.`;
+    const promptMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: input.prompt || 'Extract the transaction details from the attached image and fill the draft.', imageDataUrls }
+    ];
+    let result;
+    try {
+      result = await requestAiToolCalls(provider, model, settings.apiKeys[provider.id], promptMessages, [transactionDraftTool]);
+    } catch (error) {
+      const code = error.code?.startsWith('AI_') ? error.code : 'AI_TEST_NETWORK';
+      console.warn(JSON.stringify({ event: 'transaction_draft_failed', requestId: req.requestId, providerType: provider.type, model: model.name, code }));
+      return res.status(aiProbeErrorStatus[code] || (code === 'AI_TEST_REQUEST_REJECTED' ? 422 : 502)).json({ error: { code }, meta: { requestId: req.requestId } });
+    }
+    const toolCall = result.toolCalls.find((item) => item.name === transactionDraftTool.name);
+    if (!toolCall) return res.status(422).json({ error: { code: 'AI_TOOL_CALL_NOT_SELECTED' }, meta: { requestId: req.requestId } });
+    let values = toolCall.arguments;
+    if (typeof values === 'string') {
+      try { values = JSON.parse(values); } catch { values = null; }
+    }
+    const draftSchema = z.object({
+      title: z.string().max(100),
+      type: z.enum(['expense', 'income']),
+      amount: z.string().regex(/^$|^\d{1,12}(?:\.\d{1,2})?$/),
+      currency: z.enum([...CURRENCIES, 'unknown']),
+      transactionDate: z.string().regex(/^$|^\d{4}-\d{2}-\d{2}$/),
+      note: z.string().max(500),
+      categoryName: z.string().max(80)
+    }).strict().safeParse(values);
+    if (!draftSchema.success) return res.status(502).json({ error: { code: 'AI_TEST_INVALID_RESPONSE' }, meta: { requestId: req.requestId } });
+    const draft = draftSchema.data;
+    const normalizedCategory = draft.categoryName.trim().toLocaleLowerCase();
+    const draftChoices = choicesByType[draft.type];
+    const category = draftChoices.find((choice) => choice.name.trim().toLocaleLowerCase() === normalizedCategory)
+      || draftChoices.find((choice) => choice.name.trim().toLocaleLowerCase() === 'other');
+    return res.json({
+      data: {
+        draft: { title: draft.title, type: draft.type, amount: draft.amount, transactionDate: draft.transactionDate || currentDate, note: draft.note, categoryId: category?.id || '', categoryName: category?.name || '', currency: draft.currency },
+        categoryMatched: Boolean(category && category.name.trim().toLocaleLowerCase() === normalizedCategory),
+        currencyMatchesAccount: draft.currency === account.currency
+      },
+      meta: { requestId: req.requestId }
+    });
+  } catch (error) {
+    if (error.code === 'ENOENT') return res.status(400).json({ error: { code: 'AI_DRAFT_IMAGE_NOT_FOUND' }, meta: { requestId: req.requestId } });
+    if (error.code === 'AI_DRAFT_INVALID_IMAGE') return res.status(400).json({ error: { code: error.code }, meta: { requestId: req.requestId } });
+    if (error instanceof z.ZodError) return res.status(400).json({ error: { code: 'AI_DRAFT_INVALID_IMAGE' }, meta: { requestId: req.requestId } });
+    return sendAiSettingsError(error, req, res, next);
+  }
+});
+
 const assistantChatInput = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
@@ -556,15 +704,17 @@ function asksForMonthlyReport(messages) {
   return monthMention.test(latest) && (reportIntent.test(history) || assistantAskedToClarifyMonth || latest.trim().length <= 16);
 }
 
+function asksForMonthlyReportAnalysis(messages) {
+  const latest = messages.filter((message) => message.role === 'user').at(-1)?.content || '';
+  return /(分析|特点|特征|解读|趋势|变化|原因|总结|比较|对比|说明|怎么看|如何看|意味着|反映|analy[sz]e|interpret|insight|characteristic|trend|change|compare|explain|what does|why)/i.test(latest);
+}
+
 function appendMonthlyReportToolResult(provider, messages, toolDecision, call, report) {
   const result = JSON.stringify(report);
-  // DeepSeek Chat Completions currently rejects tool-call messages inserted
-  // mid-conversation. Give it the verified result as a clearly marked data
-  // message instead; the tool has already executed server-side.
   let hostname = '';
   try { hostname = new URL(provider.endpoint).hostname.toLowerCase(); } catch { /* The endpoint was validated before this point. */ }
   if (provider.type === 'compatible' && (hostname === 'deepseek.com' || hostname.endsWith('.deepseek.com'))) {
-    return [...messages, { role: 'user', content: `Verified result from get_monthly_report (trusted server data; answer the user's report request from these facts only):\n${result}` }];
+    return [...messages, { role: 'user', content: `Verified result from get_monthly_report (trusted server data; analyze the user's report question using these facts only):\n${result}` }];
   }
   if (provider.type === 'anthropic') {
     const callBlock = toolDecision.providerMessage || { role: 'assistant', content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.arguments }] };
@@ -655,17 +805,23 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
       const sendUsage = (usage) => res.write(`event: usage\ndata: ${JSON.stringify({ ...usage, modelId: model.id, modelName: model.customName || model.name })}\n\n`);
       if (toolUsage) sendUsage(toolUsage);
       if (report) {
-        res.write(`event: report\ndata: ${JSON.stringify({ report })}\n\n`);
         if (report.status === 'no_data') {
+          res.write(`event: report\ndata: ${JSON.stringify({ report })}\n\n`);
           const text = parsed.data.language === 'zh'
             ? `所选月份（${report.month}）没有收入或支出记录，可以尝试换一个月份。`
             : `There are no income or expense records for ${report.month}. You can try another month.`;
           res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
-        } else {
-          const followUpMessages = appendMonthlyReportToolResult(provider, messages, toolDecision, reportToolCall, report);
-          await streamAiChat(provider, model, settings.apiKeys[provider.id], followUpMessages, (text) => {
+        } else if (asksForMonthlyReportAnalysis(parsed.data.messages)) {
+          const reportMessages = appendMonthlyReportToolResult(provider, messages, toolDecision, reportToolCall, report);
+          await streamAiChat(provider, model, settings.apiKeys[provider.id], reportMessages, (text) => {
             res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
           }, { signal: controller.signal, onUsage: sendUsage });
+        } else {
+          res.write(`event: report\ndata: ${JSON.stringify({ report })}\n\n`);
+          const text = parsed.data.language === 'zh'
+            ? `以下是 ${report.month} 的月度收支报告，金额和占比按币种分别统计。`
+            : `Here is the monthly report for ${report.month}. Amounts and shares are reported separately by currency.`;
+          res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
         }
       } else {
         await streamAiChat(provider, model, settings.apiKeys[provider.id], messages, (text) => {

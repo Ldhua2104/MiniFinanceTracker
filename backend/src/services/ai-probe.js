@@ -206,7 +206,16 @@ export async function requestAiToolCalls(provider, model, apiKey, messages, tool
       model: model.name,
       max_tokens: 1200,
       system,
-      messages: dialog,
+      messages: dialog.map(({ role, content, imageDataUrls }) => imageDataUrls?.length ? ({
+        role,
+        content: [
+          ...(content ? [{ type: 'text', text: content }] : []),
+          ...imageDataUrls.map((image) => {
+            const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+            return { type: 'image', source: { type: 'base64', media_type: match?.[1] || 'image/jpeg', data: match?.[2] || '' } };
+          })
+        ]
+      }) : ({ role, content })),
       tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
       tool_choice: { type: 'any' }
     };
@@ -216,7 +225,16 @@ export async function requestAiToolCalls(provider, model, apiKey, messages, tool
     headers['x-goog-api-key'] = apiKey.trim();
     body = {
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      contents: dialog.map(({ role, content }) => ({ role: role === 'assistant' ? 'model' : 'user', parts: [{ text: content }] })),
+      contents: dialog.map(({ role, content, imageDataUrls }) => ({
+        role: role === 'assistant' ? 'model' : 'user',
+        parts: [
+          ...(content ? [{ text: content }] : []),
+          ...(imageDataUrls || []).map((image) => {
+            const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+            return { inlineData: { mimeType: match?.[1] || 'image/jpeg', data: match?.[2] || '' } };
+          })
+        ]
+      })),
       tools: [{ functionDeclarations: tools.map(({ name, description, parameters }) => ({ name, description, parameters: geminiFunctionSchema(parameters) })) }],
       toolConfig: { functionCallingConfig: { mode: 'ANY' } },
       generationConfig: { maxOutputTokens: 1200 }
@@ -227,7 +245,13 @@ export async function requestAiToolCalls(provider, model, apiKey, messages, tool
     headers.authorization = `Bearer ${apiKey.trim()}`;
     body = {
       model: model.name,
-      messages,
+      messages: messages.map(({ role, content, imageDataUrls }) => imageDataUrls?.length ? ({
+        role,
+        content: [
+          ...(content ? [{ type: 'text', text: content }] : []),
+          ...imageDataUrls.map((url) => ({ type: 'image_url', image_url: { url } }))
+        ]
+      }) : ({ role, content })),
       tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
       // `required` is rejected by some OpenAI-compatible reasoning endpoints
       // (including DeepSeek thinking mode). Keep the request portable and

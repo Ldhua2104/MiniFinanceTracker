@@ -1,6 +1,12 @@
 const API_BASE = '/api/v1';
 let csrfToken = null;
 
+function notifySessionExpired(code) {
+  if (code === 'UNAUTHENTICATED' && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('auth:expired'));
+  }
+}
+
 async function readCsrfToken() {
   const response = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include', cache: 'no-store' });
   const payload = await response.json();
@@ -35,6 +41,7 @@ export async function apiRequest(path, options = {}) {
     const payload = response.status === 204 ? null : await response.json();
     if (!response.ok) {
       const code = payload?.error?.code;
+      notifySessionExpired(code);
       if (requiresCsrf && response.status === 403 && csrfRetries === 0 && ['CSRF_REQUIRED', 'CSRF_INVALID'].includes(code)) {
         csrfToken = null;
         csrfRetries += 1;
@@ -71,6 +78,7 @@ export async function apiStream(path, options = {}, onEvent) {
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       const code = payload?.error?.code;
+      notifySessionExpired(code);
       if (requiresCsrf && response.status === 403 && csrfRetries === 0 && ['CSRF_REQUIRED', 'CSRF_INVALID'].includes(code)) {
         csrfToken = null;
         csrfRetries += 1;

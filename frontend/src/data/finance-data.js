@@ -63,7 +63,11 @@ export function ensureFinanceDefaults(data) {
     ...emptyFinanceData(),
     ...data,
     accounts: data.accounts ?? [],
-    categories
+    categories,
+    transactions: (data.transactions ?? []).map((transaction) => {
+      const { noteImage, ...rest } = transaction;
+      return { ...rest, noteImages: Array.isArray(transaction.noteImages) ? transaction.noteImages : (noteImage ? [noteImage] : []) };
+    })
   };
 }
 

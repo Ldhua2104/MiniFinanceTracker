@@ -91,7 +91,7 @@ export async function getMonthlyReport(userId, { month, timezone = 'UTC' } = {})
     IncomeSource.find({ userId }).select('-_id -userId -createdAt -updatedAt -sortOrder').lean(),
     Budget.find({ userId }).sort({ sortOrder: 1 }).select('-_id -userId -createdAt -updatedAt -sortOrder').lean(),
     Transaction.find({ userId, transactionDate: { $gte: `${reportMonth}-01`, $lt: `${nextMonth}-01` } })
-      .select('-_id -userId -createdAt -updatedAt -sortOrder -noteImage').lean()
+      .select('-_id -userId -createdAt -updatedAt -sortOrder -noteImage -noteImages').lean()
   ]);
 
   if (!transactions.length) return { status: 'no_data', month: reportMonth };
