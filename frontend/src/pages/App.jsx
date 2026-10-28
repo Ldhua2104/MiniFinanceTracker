@@ -12,6 +12,7 @@ import { budgetColors } from '../utils/colors.js';
 import { IncomePage, IncomeSourceForm } from './IncomePage.jsx';
 import { ActivityPage, TransactionForm } from './TransactionsPage.jsx';
 import { OverviewPage } from './OverviewPage.jsx';
+import { AssistantPage } from './AssistantPage.jsx';
 import { SettingsPage } from './SettingsPage.jsx';
 import { ProfileAvatar, ProfilePage } from './ProfilePage.jsx';
 
@@ -369,6 +370,7 @@ export function App() {
             <button className={page === 'activity' ? 'selected' : ''} onClick={() => setPage('activity')}><span>↗</span>{t('activity')}</button>
             <button className={page === 'budgets' ? 'selected' : ''} onClick={() => setPage('budgets')}><span>◷</span>{t('budgets')}</button>
             <button className={page === 'income' ? 'selected' : ''} onClick={() => setPage('income')}><span>↑</span>{t('income')}</button>
+            <button className={page === 'assistant' ? 'selected' : ''} onClick={() => setPage('assistant')}><span>✳</span>{t('assistant')}</button>
             <button className={page === 'profile' ? 'selected' : ''} onClick={() => setPage('profile')}><span>○</span>{t('profile')}</button>
             <button className={page === 'settings' ? 'selected' : ''} onClick={() => setPage('settings')}><span>⚙</span>{t('settings')}</button>
           </nav>
@@ -390,6 +392,8 @@ export function App() {
             <IncomePage categories={financeData.categories} transactions={financeData.transactions} accounts={financeData.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} onRefreshFx={refreshFxRates} onAddSource={() => openIncomeSourceEditor()} onEditSource={openIncomeSourceEditor} />
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
+          ) : page === 'assistant' ? (
+            <AssistantPage user={user} t={t} onOpenSettings={() => setPage('settings')} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
