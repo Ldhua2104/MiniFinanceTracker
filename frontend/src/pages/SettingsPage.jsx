@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
-import { emptyAiSettings, loadLocalAiSettings, migrateLocalAiSettings, saveLocalAiSettings } from '../data/ai-settings.js';
+import { emptyAiSettings, loadLocalAiSettings, migrateLocalAiSettings } from '../data/ai-settings.js';
 import { PageTitle } from '../components/PageTitle.jsx';
 
 export const AI_TEST_ERROR_KEYS = {
@@ -32,32 +32,6 @@ export const AI_TEST_ERROR_KEYS = {
 
 export const AI_TEST_RETRYABLE_CODES = new Set(['AI_TEST_RATE_LIMITED', 'AI_TEST_TIMEOUT', 'AI_TEST_PROVIDER_UNAVAILABLE', 'AI_TEST_NETWORK', 'AI_TEST_DNS_FAILED']);
 
-export function aiProbeRequest(provider, model) {
-  let endpoint;
-  try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
-  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' });
-  if (endpoint.protocol !== 'https:') throw Object.assign(new Error(), { code: 'AI_TEST_INSECURE_ENDPOINT' });
-  const basePath = endpoint.pathname.replace(/\/+$/, '');
-  const headers = { 'content-type': 'application/json', accept: 'application/json' };
-  let url;
-  let body;
-  if (provider.type === 'anthropic') {
-    url = new URL(`${basePath.endsWith('/messages') ? basePath : `${basePath}/messages`}${endpoint.search}`, endpoint.origin);
-    headers['anthropic-version'] = '2023-06-01';
-    body = { model: model.name, max_tokens: 8, messages: [{ role: 'user', content: 'Reply with exactly OK.' }] };
-  } else if (provider.type === 'gemini') {
-    const path = basePath.includes(':generateContent') ? basePath : `${basePath}/models/${encodeURIComponent(model.name)}:generateContent`;
-    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
-    body = { contents: [{ parts: [{ text: 'Reply with exactly OK.' }] }], generationConfig: { maxOutputTokens: 8 } };
-  } else {
-    const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
-    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
-    headers.authorization = 'Bearer';
-    body = { model: model.name, messages: [{ role: 'user', content: 'Reply with exactly OK.' }], max_tokens: 8, stream: false };
-  }
-  return { url, headers, body };
-}
-
 export function normalizeAiSettings(settings) {
   const empty = emptyAiSettings();
   return {
@@ -65,42 +39,6 @@ export function normalizeAiSettings(settings) {
     ...settings,
     assignments: { receipt: settings?.assignments?.receipt || '', conversation: settings?.assignments?.conversation || '' }
   };
-}
-
-export async function probeAiModelInBrowser(provider, model, apiKey) {
-  if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
-  const { url, headers, body } = aiProbeRequest(provider, model);
-  if (provider.type === 'gemini') headers['x-goog-api-key'] = apiKey.trim();
-  else if (provider.type === 'anthropic') headers['x-api-key'] = apiKey.trim();
-  else headers.authorization = `Bearer ${apiKey.trim()}`;
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
-  let response;
-  try {
-    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
-  } catch (error) {
-    throw Object.assign(new Error(), { code: error.name === 'AbortError' ? 'AI_TEST_TIMEOUT' : 'AI_TEST_NETWORK' });
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-  if (!response.ok) {
-    const status = response.status;
-    const code = status === 401 || status === 403 ? 'AI_TEST_AUTH_FAILED'
-      : status === 404 ? 'AI_TEST_MODEL_OR_ENDPOINT_NOT_FOUND'
-        : status === 429 ? 'AI_TEST_RATE_LIMITED'
-          : status >= 500 ? 'AI_TEST_PROVIDER_UNAVAILABLE'
-            : status >= 300 ? 'AI_TEST_REDIRECT_UNSUPPORTED'
-              : status === 400 || status === 422 ? 'AI_TEST_REQUEST_REJECTED' : 'AI_TEST_REQUEST_FAILED';
-    throw Object.assign(new Error(), { code });
-  }
-  let payload;
-  try { payload = await response.json(); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' }); }
-  const hasText = provider.type === 'anthropic'
-    ? payload.content?.some((part) => typeof part.text === 'string')
-    : provider.type === 'gemini'
-      ? payload.candidates?.some((candidate) => candidate.content?.parts?.some((part) => typeof part.text === 'string'))
-      : typeof payload.choices?.[0]?.message?.content === 'string';
-  if (!hasText) throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' });
 }
 
 export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat, user }) {
@@ -132,20 +70,18 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
   useEffect(() => {
     let active = true;
     setAiSaveStatus('');
+    if (!user) {
+      setAiConfig(normalizeAiSettings(emptyAiSettings()));
+      setProviderKeys({});
+      return () => { active = false; };
+    }
     async function loadAiSettings() {
       try {
-        if (user) {
-          let response = await migrateLocalAiSettings(apiRequest);
-          if (!response) response = (await apiRequest('/auth/ai-settings')).data;
-          if (!active) return;
-          setAiConfig(normalizeAiSettings(response));
-          setProviderKeys({});
-        } else {
-          const local = await loadLocalAiSettings();
-          if (!active) return;
-          setAiConfig(normalizeAiSettings(local.settings));
-          setProviderKeys(local.apiKeys);
-        }
+        let response = await migrateLocalAiSettings(apiRequest);
+        if (!response) response = (await apiRequest('/auth/ai-settings')).data;
+        if (!active) return;
+        setAiConfig(normalizeAiSettings(response));
+        setProviderKeys({});
       } catch {
         if (!active) return;
         try {
@@ -326,18 +262,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
       models: config.models,
       assignments: config.assignments
     };
-    if (!user) {
-      try {
-        const savedConfig = { ...config, providers: settings.providers };
-        const savedSettings = { ...settings, providers: savedConfig.providers };
-        await saveLocalAiSettings(savedSettings, effectiveKeys);
-        setAiConfig(savedConfig);
-        setProviderKeys({});
-        setAiSaveStatus(t('saved'));
-        return true;
-      }
-      catch { setAiSaveStatus(t('aiLocalEncryptionUnavailable')); return false; }
-    }
+    if (!user) return false;
     try {
       const request = {
         method: 'PUT',
@@ -371,6 +296,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
   }
 
   const testAssignedAiTasks = async () => {
+    if (!user) return;
     const tasks = ['receipt', 'conversation'].filter((task) => aiConfig.assignments?.[task]);
     if (!tasks.length) {
       setAiTaskTestResults({});
@@ -394,15 +320,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
           attemptsMade = attempt;
           setAiTaskTestProgress({ task, attempt, taskIndex: taskIndex + 1, totalTasks: tasks.length });
           try {
-            if (user) {
-              await apiRequest('/auth/ai-settings/test', { method: 'POST', body: JSON.stringify({ task }) });
-            } else {
-              const model = configToTest.models.find((item) => item.id === configToTest.assignments[task]);
-              const provider = configToTest.providers.find((item) => item.id === model?.providerId);
-              if (!model) throw Object.assign(new Error(), { code: 'AI_TEST_MODEL_NOT_FOUND' });
-              if (!provider) throw Object.assign(new Error(), { code: 'AI_TEST_PROVIDER_NOT_FOUND' });
-              await probeAiModelInBrowser(provider, model, keysToTest[provider.id]);
-            }
+            await apiRequest('/auth/ai-settings/test', { method: 'POST', body: JSON.stringify({ task }) });
             succeeded = true;
             setAiTaskTestResults((current) => ({ ...current, [task]: { status: 'success', attempts: attempt } }));
             break;
@@ -438,7 +356,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
       <label className="settings-row"><span><strong>{t('theme')}</strong><small>{t('themeHint')}</small></span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></select></label>
       <label className="settings-row"><span><strong>{t('timeFormat')}</strong><small>{t('timeFormatHint')}</small></span><select value={timeFormat} onChange={(event) => setTimeFormat(event.target.value)}><option value="12">{t('hourFormat12')}</option><option value="24">{t('hourFormat24')}</option></select></label>
     </div>
-    <section className="ai-settings-section">
+    {user && <section className="ai-settings-section">
       <header className="ai-settings-heading"><div><div className="eyebrow">{t('aiManagement')}</div><h2>{t('aiConfiguration')}</h2><p>{t('aiSettingsHint')}</p></div>{aiSaveStatus && <small className="ai-save-status">{aiSaveStatus}</small>}</header>
       <article className="panel ai-config-card">
         <div className="ai-step-heading"><span>1</span><div><h3>{t('aiProviders')}</h3><p>{t('aiProviderHint')}</p></div></div>
@@ -507,7 +425,7 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
         </div>
         <div className="ai-provider-edit-actions"><button className="secondary-button ai-test-button" type="button" disabled={isTestingAiTasks || !assignedAiTaskCount} onClick={testAssignedAiTasks}>{isTestingAiTasks ? t('aiTestRunning') : t('aiTestAssignedTasks')}</button><button className={`ai-provider-save-button ${taskAssignmentsSaved ? 'is-saved' : ''}`} type="button" disabled={isTestingAiTasks || !allAssignedTasksPassed || taskAssignmentsSaved} onClick={saveTaskAssignments}>{taskAssignmentsSaved && <svg className="ai-save-success-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8 12 2.6 2.6L16.5 9" /></svg>}{taskAssignmentsSaved ? t('saved') : t('aiSaveChanges')}</button></div>
       </article>
-    </section>
+    </section>}
     <article className="panel migration-option-card">
       <div><strong>{t('migrationOption')}</strong><p>{t('migrationOptionHint')}</p>{migrationNotice && <small className="migration-notice">{t('migrationComingSoon')}</small>}</div>
       <button className="secondary-button" onClick={() => setMigrationNotice(true)}>{t('migrationOption')}</button>

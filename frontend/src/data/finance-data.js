@@ -109,8 +109,18 @@ export function mergeFinanceData(serverData, localData) {
 }
 
 export async function loadServerData() {
-  const response = await apiRequest('/auth/data');
-  return ensureFinanceDefaults(response.data);
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await apiRequest('/auth/data');
+      return ensureFinanceDefaults(response.data);
+    } catch (error) {
+      lastError = error;
+      if ((error.status && error.status < 500) || attempt === 2) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 export async function saveServerData(data) {

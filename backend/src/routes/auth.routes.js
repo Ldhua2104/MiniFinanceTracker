@@ -15,6 +15,10 @@ import { decryptAiSettings, encryptAiSettings } from '../services/ai-settings-cr
 import { isAiProbeRetryable, probeAiModel, streamAiChat } from '../services/ai-probe.js';
 
 export const authRouter = Router();
+authRouter.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+  next();
+});
 const userStorageRoot = fileURLToPath(new URL('../../storage/users/', import.meta.url));
 const assistantPromptFile = fileURLToPath(new URL('../prompts/assistant-system.md', import.meta.url));
 const userStorageDirectory = (userId, area) => path.join(userStorageRoot, String(userId), area);

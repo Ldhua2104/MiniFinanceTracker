@@ -2,7 +2,7 @@ const API_BASE = '/api/v1';
 let csrfToken = null;
 
 async function readCsrfToken() {
-  const response = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include' });
+  const response = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include', cache: 'no-store' });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload?.error?.message ?? 'Could not initialize request security');
   csrfToken = payload.data.csrfToken;
@@ -29,7 +29,8 @@ export async function apiRequest(path, options = {}) {
       ...options,
       method,
       headers,
-      credentials: 'include'
+      credentials: 'include',
+      cache: 'no-store'
     });
     const payload = response.status === 204 ? null : await response.json();
     if (!response.ok) {
@@ -66,7 +67,7 @@ export async function apiStream(path, options = {}, onEvent) {
       if (!csrfToken) await readCsrfToken();
       headers['X-CSRF-Token'] = csrfToken;
     }
-    const response = await fetch(`${API_BASE}${path}`, { ...options, method, headers, credentials: 'include' });
+    const response = await fetch(`${API_BASE}${path}`, { ...options, method, headers, credentials: 'include', cache: 'no-store' });
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       const code = payload?.error?.code;

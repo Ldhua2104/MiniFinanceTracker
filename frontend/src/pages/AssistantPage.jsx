@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, apiStream } from '../api/client.js';
-import { loadLocalAiSettings } from '../data/ai-settings.js';
 import { PageTitle } from '../components/PageTitle.jsx';
 import { MarkdownContent } from '../components/MarkdownContent.jsx';
 
@@ -49,21 +48,19 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
 
   useEffect(() => {
     let active = true;
+    if (!user) {
+      setModel(null);
+      setModelState('unavailable');
+      return () => { active = false; };
+    }
     setModelState('loading');
     async function loadModel() {
       try {
-        let config;
-        let localKeys = {};
-        if (user) config = (await apiRequest('/auth/ai-settings')).data;
-        else {
-          const local = await loadLocalAiSettings();
-          config = local.settings;
-          localKeys = local.apiKeys;
-        }
+        const config = (await apiRequest('/auth/ai-settings')).data;
         const assignedId = config.assignments?.conversation;
         const assigned = config.models?.find((entry) => entry.id === assignedId);
         const provider = config.providers?.find((item) => item.id === assigned?.providerId);
-        const hasApiKey = user ? Boolean(provider?.hasApiKey) : Boolean(localKeys[provider?.id]);
+        const hasApiKey = Boolean(provider?.hasApiKey);
         if (active) {
           setModel(assigned ? { ...assigned, provider, hasApiKey } : null);
           setModelState(assigned ? (hasApiKey ? 'ready' : 'missing-key') : 'unassigned');

@@ -1757,7 +1757,9 @@ h2 {
 
 .assistant-workspace {
     display: grid;
+    width: 100%;
     flex: 1;
+    min-width: 0;
     min-height: 0;
     grid-template-columns: minmax(205px, .36fr) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
@@ -2210,6 +2212,7 @@ h2 {
 
 .assistant-chat {
     display: flex;
+    width: 100%;
     min-width: 0;
     min-height: 0;
     flex-direction: column;
@@ -2269,6 +2272,9 @@ h2 {
 
 .assistant-message-area {
     display: grid;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     min-height: 0;
     flex: 1;
     place-items: center;
@@ -2297,8 +2303,10 @@ h2 {
 
 .assistant-message-list {
     display: flex;
-    width: min(100%, 1100px);
+    width: 100%;
+    max-width: none;
     min-width: 0;
+    overflow-x: hidden;
     flex-direction: column;
     gap: 14px;
     margin: 0 auto;
@@ -2311,6 +2319,8 @@ h2 {
 
 .assistant-message {
     display: flex;
+    width: 100%;
+    min-width: 0;
     justify-content: flex-start;
 }
 
@@ -2319,8 +2329,13 @@ h2 {
 }
 
 .assistant-message>div {
+    width: fit-content;
     max-width: min(92%, 980px);
     min-width: 0;
+    flex: 0 1 auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
     padding: 12px 15px;
     border: 1px solid var(--line);
     border-radius: 16px 16px 16px 5px;
@@ -2328,11 +2343,11 @@ h2 {
     color: var(--text);
     font-size: 12px;
     line-height: 1.7;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
 }
 
 .assistant-message.user>div {
+    max-width: min(92%, 980px);
+    margin-left: auto;
     border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
     border-radius: 16px 16px 5px 16px;
     background: var(--accent-soft);
@@ -2415,6 +2430,7 @@ h2 {
 }
 
 .markdown-table-wrap {
+    display: block;
     width: 100%;
     max-width: 100%;
     min-width: 0;
@@ -2426,6 +2442,20 @@ h2 {
     background: var(--surface);
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--muted) 40%, transparent) transparent;
+    -webkit-overflow-scrolling: touch;
+}
+
+.markdown-table-wrap::-webkit-scrollbar {
+    height: 8px;
+}
+
+.markdown-table-wrap::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.markdown-table-wrap::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--muted) 42%, transparent);
 }
 
 .markdown-content table {

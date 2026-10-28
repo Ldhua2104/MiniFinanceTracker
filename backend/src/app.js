@@ -42,7 +42,9 @@ app.use('/api', (_req, res) => {
 const frontendDist = fileURLToPath(new URL('../../frontend/dist/', import.meta.url));
 app.use(express.static(frontendDist, { index: false, fallthrough: true }));
 app.get(/.*/, (req, res, next) => {
-  res.sendFile(path.join(frontendDist, 'index.html'), (error) => {
+  const indexPath = path.join(frontendDist, 'index.html');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(indexPath, { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' } }, (error) => {
     if (error) next();
   });
 });

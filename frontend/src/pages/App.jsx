@@ -51,23 +51,33 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    apiRequest('/auth/me')
-      .then(async ({ data: account }) => {
-        const remote = await loadServerData();
-        try { await migrateLocalAiSettings(apiRequest); } catch { /* Keep encrypted local AI settings when migration is unavailable. */ }
-        if (!active) return;
-        setUser(account);
-        setRole(APP_ROLES.user);
-        setFinanceData(remote);
-        setFinanceDataReady(true);
-      })
-      .catch(() => {
+    async function loadInitialData() {
+      let account;
+      try {
+        ({ data: account } = await apiRequest('/auth/me'));
+      } catch {
         if (!active) return;
         setUser(null);
         setRole(APP_ROLES.anonymous);
         setFinanceData(loadAnonymousData());
         setFinanceDataReady(true);
-      });
+        return;
+      }
+      if (!active) return;
+      setUser(account);
+      setRole(APP_ROLES.user);
+      try {
+        const remote = await loadServerData();
+        try { await migrateLocalAiSettings(apiRequest); } catch { /* Keep encrypted local AI settings when migration is unavailable. */ }
+        if (!active) return;
+        setFinanceData(remote);
+        setFinanceDataReady(true);
+      } catch {
+        if (!active) return;
+        setSaveStatus('failed');
+      }
+    }
+    void loadInitialData();
     return () => { active = false; };
   }, []);
 
@@ -91,12 +101,19 @@ export function App() {
   }, [page]);
 
   useEffect(() => {
+    if (!user && page === 'assistant') {
+      setPage('overview');
+      setAssistantToolsOpen(false);
+    }
+  }, [user, page]);
+
+  useEffect(() => {
     setAssistantContext({ model: null, conversations: [] });
   }, [user?.id]);
 
   useEffect(() => {
-    if (page === 'assistant' && assistantToolsOpen) setRightRailCollapsed(false);
-  }, [page, assistantToolsOpen]);
+    if (user && page === 'assistant' && assistantToolsOpen) setRightRailCollapsed(false);
+  }, [user, page, assistantToolsOpen]);
 
   useEffect(() => {
     if (page !== 'activity' && page !== 'budgets' && page !== 'income') return undefined;
@@ -165,11 +182,11 @@ export function App() {
     setUser(account);
     setRole(APP_ROLES.user);
     setPage('profile');
+    setFinanceData(remote);
     if (hasFinanceData(local)) {
       setMigration({ local, remote });
       setFinanceDataReady(false);
     } else {
-      setFinanceData(remote);
       setFinanceDataReady(true);
     }
   }
@@ -189,6 +206,7 @@ export function App() {
     try { await apiRequest('/auth/logout', { method: 'POST' }); } catch { /* The local session still ends in this browser. */ }
     setUser(null);
     setRole(APP_ROLES.anonymous);
+    setPage('overview');
     setMigration(null);
     setFinanceData(loadAnonymousData());
     setFinanceDataReady(true);
@@ -384,7 +402,7 @@ export function App() {
             <button className={page === 'activity' ? 'selected' : ''} onClick={() => setPage('activity')}><span>↗</span>{t('activity')}</button>
             <button className={page === 'budgets' ? 'selected' : ''} onClick={() => setPage('budgets')}><span>◷</span>{t('budgets')}</button>
             <button className={page === 'income' ? 'selected' : ''} onClick={() => setPage('income')}><span>↑</span>{t('income')}</button>
-            <button className={page === 'assistant' ? 'selected' : ''} onClick={() => setPage('assistant')}><span>✳</span>{t('assistant')}</button>
+            {user && <button className={page === 'assistant' ? 'selected' : ''} onClick={() => setPage('assistant')}><span>✳</span>{t('assistant')}</button>}
             <button className={page === 'profile' ? 'selected' : ''} onClick={() => setPage('profile')}><span>○</span>{t('profile')}</button>
             <button className={page === 'settings' ? 'selected' : ''} onClick={() => setPage('settings')}><span>⚙</span>{t('settings')}</button>
           </nav>
@@ -406,12 +424,12 @@ export function App() {
             <IncomePage categories={financeData.categories} transactions={financeData.transactions} accounts={financeData.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} onRefreshFx={refreshFxRates} onAddSource={() => openIncomeSourceEditor()} onEditSource={openIncomeSourceEditor} />
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
-          ) : page === 'assistant' ? (
+          ) : page === 'assistant' && user ? (
             <AssistantPage user={user} t={t} language={language} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
-        <aside className={`right-rail ${rightEditor ? 'editing' : ''} ${page === 'assistant' && assistantToolsOpen ? 'assistant-tools-visible' : ''} ${rightRailCollapsed ? 'collapsed' : ''}`}>
+        <aside className={`right-rail ${rightEditor ? 'editing' : ''} ${user && page === 'assistant' && assistantToolsOpen ? 'assistant-tools-visible' : ''} ${rightRailCollapsed ? 'collapsed' : ''}`}>
           <div className="right-rail-toggle-row">
             <button className="right-rail-toggle" type="button" aria-expanded={!rightRailCollapsed} aria-label={t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')} title={t(rightRailCollapsed ? 'expandRightRail' : 'collapseRightRail')} onClick={() => setRightRailCollapsed((collapsed) => !collapsed)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d={rightRailCollapsed ? 'm9 6 6 6-6 6' : 'm15 6-6 6 6 6'} /></svg>
@@ -419,7 +437,7 @@ export function App() {
             </button>
           </div>
           <div className="right-rail-content">
-          {page === 'assistant' && assistantToolsOpen ? (
+          {user && page === 'assistant' && assistantToolsOpen ? (
             <AssistantToolsPanel t={t} language={language} model={assistantContext.model} conversations={assistantContext.conversations} />
           ) : rightEditor === 'account' ? (
             <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
