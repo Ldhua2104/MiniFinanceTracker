@@ -17,6 +17,7 @@ function readImage(file) {
 export function TransactionAiDraftModal({ noteImages = [], account, type, language, t, onClose, onDraft }) {
   const [images, setImages] = useState([]);
   const [prompt, setPrompt] = useState('');
+  const [recognitionMode, setRecognitionMode] = useState('ai');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
 
@@ -45,6 +46,10 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
   async function createDraft(event) {
     event.preventDefault();
     if (working) return;
+    if (recognitionMode === 'ocr') {
+      setError(t('ocrRecognitionNotReady'));
+      return;
+    }
     setWorking(true);
     setError('');
     try {
@@ -90,6 +95,17 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
     <section className="panel ai-draft-modal" role="dialog" aria-modal="true" aria-labelledby="ai-draft-title">
       <header className="ai-draft-heading"><div><span className="eyebrow">{t('aiDraftEyebrow')}</span><h2 id="ai-draft-title">{t('aiDraftTitle')}</h2><p>{t('aiDraftHint')}</p></div><button className="icon-button ai-draft-close" type="button" onClick={onClose} disabled={working} aria-label={t('close')}>×</button></header>
       <form onSubmit={createDraft}>
+        <fieldset className="recognition-mode-field">
+          <legend>{t('recognitionMethod')}</legend>
+          <div className="recognition-mode-options" role="radiogroup" aria-label={t('recognitionMethod')}>
+            <button className={`recognition-mode-option ${recognitionMode === 'ai' ? 'selected' : ''}`} type="button" role="radio" aria-checked={recognitionMode === 'ai'} onClick={() => { setRecognitionMode('ai'); setError(''); }}>
+              <strong>{t('aiRecognitionOption')}</strong><small>{t('aiRecognitionOptionHint')}</small>
+            </button>
+            <button className={`recognition-mode-option ${recognitionMode === 'ocr' ? 'selected' : ''}`} type="button" role="radio" aria-checked={recognitionMode === 'ocr'} onClick={() => { setRecognitionMode('ocr'); setError(''); }}>
+              <strong>{t('ocrRecognitionOption')}</strong><small>{t('ocrRecognitionOptionHint')}</small>
+            </button>
+          </div>
+        </fieldset>
         <label className="field ai-draft-prompt"><span>{t('message')}</span><textarea rows="3" maxLength="3000" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={t('aiDraftPromptPlaceholder')} /></label>
         <div className="field ai-draft-images"><span>{t('aiDraftImages')}</span>
           <div className="ai-draft-image-list">
@@ -100,7 +116,7 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
           <small>{t('aiDraftImageLimit')}</small>
         </div>
         {error && <p className="ai-draft-error" role="alert">{error}</p>}
-        <footer className="ai-draft-actions"><button className="secondary-button" type="button" onClick={onClose} disabled={working}>{t('cancel')}</button><button className="primary-button" type="submit" disabled={working}>{working ? <><span className="ai-test-spinner" aria-hidden="true" />{t('aiDraftWorking')}</> : t('aiDraftRun')}</button></footer>
+        <footer className="ai-draft-actions"><button className="secondary-button" type="button" onClick={onClose} disabled={working}>{t('cancel')}</button><button className="primary-button" type="submit" disabled={working}>{working ? <><span className="ai-test-spinner" aria-hidden="true" />{t('aiDraftWorking')}</> : recognitionMode === 'ocr' ? t('ocrRecognitionRun') : t('aiDraftRun')}</button></footer>
       </form>
     </section>
   </div>;

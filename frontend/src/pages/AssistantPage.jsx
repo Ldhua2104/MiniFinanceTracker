@@ -14,7 +14,10 @@ function readConversations(storageKey) {
         messages: Array.isArray(item.messages) ? item.messages.filter((message) => message
           && ['user', 'assistant'].includes(message.role)
           && typeof message.content === 'string'
-          && message.content.trim()).slice(-200) : []
+          && (message.content.trim() || message.images?.length)).map((message) => ({
+            ...message,
+            images: Array.isArray(message.images) ? message.images.filter((image) => typeof image === 'string' && /^data:image\/(?:png|jpeg|webp|gif);base64,/.test(image)).slice(0, 4) : []
+          })).slice(-200) : []
       })) : [];
   } catch {
     return [];
@@ -29,12 +32,14 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
   const [modelState, setModelState] = useState('loading');
   const [conversationsExpanded, setConversationsExpanded] = useState(true);
   const [draft, setDraft] = useState('');
+  const [pendingImages, setPendingImages] = useState([]);
   const [sending, setSending] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [streamingReport, setStreamingReport] = useState(null);
   const [streamingConversationId, setStreamingConversationId] = useState('');
   const [sendError, setSendError] = useState('');
   const messageAreaRef = useRef(null);
+  const imageInputRef = useRef(null);
 
   useEffect(() => {
     const items = readConversations(storageKey);
@@ -44,7 +49,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
 
   useEffect(() => {
     if (storedConversations.key === storageKey) {
-      localStorage.setItem(storageKey, JSON.stringify(storedConversations.items));
+      try { localStorage.setItem(storageKey, JSON.stringify(storedConversations.items)); } catch { /* Keep the active conversation usable if browser storage is full. */ }
     }
   }, [storedConversations, storageKey]);
 
@@ -96,6 +101,25 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     setSelectedId(conversation.id);
   }
 
+  function chooseImages(event) {
+    const files = [...(event.target.files ?? [])];
+    event.target.value = '';
+    if (!files.length) return;
+    if (pendingImages.length + files.length > 4 || files.some((file) => !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024)) {
+      setSendError('assistantImageInvalid');
+      return;
+    }
+    Promise.all(files.map((file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('invalid image'));
+      reader.onerror = () => reject(new Error('invalid image'));
+      reader.readAsDataURL(file);
+    }))).then((images) => {
+      setPendingImages((current) => [...current, ...images]);
+      setSendError('');
+    }).catch(() => setSendError('assistantImageInvalid'));
+  }
+
   function deleteConversation(id) {
     if (!window.confirm(t('confirmDeleteConversation'))) return;
     const next = conversations.filter((item) => item.id !== id);
@@ -106,28 +130,32 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
   async function sendMessage(event) {
     event.preventDefault();
     const content = draft.trim();
-    if (!content || !user || !selectedConversation || sending || modelState !== 'ready') return;
+    if ((!content && !pendingImages.length) || !user || !selectedConversation || sending || modelState !== 'ready') return;
     const conversationId = selectedConversation.id;
-    const userMessage = { id: crypto.randomUUID(), role: 'user', content, createdAt: new Date().toISOString() };
+    const userMessage = { id: crypto.randomUUID(), role: 'user', content, images: pendingImages, createdAt: new Date().toISOString() };
     const pendingMessages = [...(selectedConversation.messages ?? []), userMessage];
     let contextLength = 0;
+    let remainingImages = 4;
     const contextMessages = [];
     for (const message of pendingMessages.slice(-40).reverse()) {
       const remaining = 28000 - contextLength;
       if (remaining <= 0) break;
       const messageContent = message.content.slice(-Math.min(message.content.length, remaining));
-      contextMessages.unshift({ role: message.role, content: messageContent });
+      const images = (message.images ?? []).slice(0, remainingImages);
+      remainingImages -= images.length;
+      contextMessages.unshift({ role: message.role, content: messageContent, ...(images.length ? { images } : {}) });
       contextLength += messageContent.length;
     }
     setSendError('');
     setDraft('');
+    setPendingImages([]);
     setSending(true);
     setStreamingText('');
     setStreamingReport(null);
     setStreamingConversationId(conversationId);
     setStoredConversations((current) => ({
       ...current,
-      items: current.items.map((item) => item.id === conversationId ? { ...item, title: item.messages?.length ? item.title : content.slice(0, 48), messages: pendingMessages } : item)
+      items: current.items.map((item) => item.id === conversationId ? { ...item, title: item.messages?.length ? item.title : (content.slice(0, 48) || t('assistantImageMessageTitle')), messages: pendingMessages } : item)
     }));
     let responseText = '';
     let streamedUsage = null;
@@ -148,7 +176,10 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
           responseReport = data.report;
           setStreamingReport(data.report);
         }
-        if (event === 'transaction_draft' && data.draft) onCreateTransactionDraft?.(data.draft);
+        if (event === 'transaction_draft' && data.draft) {
+          const sourceImages = contextMessages.flatMap((message) => message.role === 'user' ? (message.images ?? []) : []).slice(-4);
+          onCreateTransactionDraft?.({ ...data.draft, ...(sourceImages.length ? { noteImages: sourceImages } : {}) });
+        }
       });
       const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, report: responseReport, createdAt: new Date().toISOString() };
       setStoredConversations((current) => ({
@@ -171,6 +202,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
         })
       }));
       setDraft(content);
+      setPendingImages(userMessage.images);
       setSendError(error.code === 'UNAUTHENTICATED' ? 'assistantSignInRequired'
         : error.code === 'AI_CHAT_MODEL_UNASSIGNED' || error.code === 'AI_CHAT_MODEL_NOT_FOUND' ? 'assistantModelUnassigned'
           : error.code === 'AI_CHAT_KEY_MISSING' || error.code === 'AI_TEST_KEY_MISSING' ? 'assistantModelMissingKey'
@@ -213,15 +245,22 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
         </header>
 
         <div className={`assistant-message-area ${selectedConversation?.messages?.length ? 'has-messages' : ''}`} ref={messageAreaRef} aria-live="polite">
-          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div><MarkdownContent content={message.content} />{message.report && <MonthlyReportCard report={message.report} language={language} t={t} />}</div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}{streamingReport && <MonthlyReportCard report={streamingReport} language={language} t={t} />}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
+          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div>{message.content && <MarkdownContent content={message.content} />}{message.images?.length > 0 && <div className="assistant-message-images">{message.images.map((image, index) => <a key={index} href={image} target="_blank" rel="noreferrer"><img src={image} alt={t('assistantAttachedImage')} loading="lazy" /></a>)}</div>}{message.report && <MonthlyReportCard report={message.report} language={language} t={t} />}</div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}{streamingReport && <MonthlyReportCard report={streamingReport} language={language} t={t} />}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
         </div>
 
         <div className="assistant-composer-wrap">
           <label className="assistant-composer-label" htmlFor="assistant-composer">{t('messageComposer')}</label>
           {sendError && <p className="assistant-send-error" role="alert">{t(sendError)}</p>}
+          {pendingImages.length > 0 && <div className="assistant-pending-images" aria-label={t('assistantAttachedImage')}>
+            {pendingImages.map((image, index) => <div className="assistant-pending-image" key={`${index}-${image.slice(0, 32)}`}><img src={image} alt={t('assistantAttachedImage')} /><button type="button" onClick={() => setPendingImages((current) => current.filter((_, imageIndex) => imageIndex !== index))} aria-label={t('removeImage')} title={t('removeImage')}>×</button></div>)}
+          </div>}
           <form className="assistant-composer" onSubmit={sendMessage}>
+            <label className="assistant-attach-button" title={t('assistantUploadImage')} aria-label={t('assistantUploadImage')}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 12.5 6.9-6.9a3.5 3.5 0 0 1 5 5l-9.2 9.2a5 5 0 0 1-7.1-7.1l8.5-8.5" /></svg>
+              <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={chooseImages} disabled={!user || !selectedConversation || sending || pendingImages.length >= 4} />
+            </label>
             <textarea id="assistant-composer" rows="2" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendMessage(event); }} disabled={!user || !selectedConversation || sending} placeholder={!user ? t('assistantSignInRequired') : !selectedConversation ? t('assistantCreateConversationHint') : t('assistantInputHint')} aria-describedby="assistant-status" maxLength={8000} />
-            <button type="submit" className="assistant-send-button" disabled={!user || !selectedConversation || !draft.trim() || sending || modelState !== 'ready'} aria-label={t('sendMessage')} title={t('sendMessage')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-4 16-4-6-8-2Z" /><path d="m12 14 8-10" /></svg></button>
+            <button type="submit" className="assistant-send-button" disabled={!user || !selectedConversation || (!draft.trim() && !pendingImages.length) || sending || modelState !== 'ready'} aria-label={t('sendMessage')} title={t('sendMessage')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-4 16-4-6-8-2Z" /><path d="m12 14 8-10" /></svg></button>
           </form>
           <div className="assistant-composer-footer" id="assistant-status"><span>{!user ? t('assistantSignInRequired') : sending ? t('assistantSending') : modelState !== 'ready' ? t(modelState === 'missing-key' ? 'assistantModelMissingKey' : modelState === 'unassigned' ? 'assistantModelUnassigned' : 'assistantModelUnavailable') : t('assistantInputHint')}</span><button type="button" onClick={onOpenSettings}>{t('configureAi')}</button></div>
         </div>

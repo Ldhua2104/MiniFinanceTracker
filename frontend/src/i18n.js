@@ -113,6 +113,11 @@ const tokenUsageMessages = {
     zh: { tokenModelTotal: '\u5f53\u524d\u6a21\u578b\u7d2f\u8ba1\u6d88\u8017', tokenConversationDetails: '\u6bcf\u4e2a\u5bf9\u8bdd\u7684\u8be6\u7ec6\u6d88\u8017', tokenInput: '\u8f93\u5165', tokenOutput: '\u8f93\u51fa', tokenUsageEmpty: '\u6682\u65e0\u5bf9\u8bdd\u3002' }
 };
 
+const assistantImageMessages = {
+    en: { assistantUploadImage: 'Attach image', assistantAttachedImage: 'Attached image', assistantImageMessageTitle: 'Image message', assistantImageInvalid: 'Use up to four PNG, JPEG, WebP or GIF images, each no larger than 5 MB.' },
+    zh: { assistantUploadImage: '\u4e0a\u4f20\u56fe\u7247', assistantAttachedImage: '\u5bf9\u8bdd\u56fe\u7247', assistantImageMessageTitle: '\u56fe\u7247\u6d88\u606f', assistantImageInvalid: '\u6700\u591a\u6dfb\u52a0\u56db\u5f20 PNG\u3001JPEG\u3001WebP \u6216 GIF \u56fe\u7247\uff0c\u6bcf\u5f20\u4e0d\u8d85\u8fc7 5 MB\u3002' }
+};
+
 const monthlyReportMessages = {
     en: { monthlyReport: 'Monthly report', monthlyAnalysis: 'Monthly analysis', monthlyReportNoData: 'There are no income or expense records for this month.', refreshReport: 'Refresh report', reportIncome: 'Income', reportExpenses: 'Expenses', reportNet: 'Net', reportExpenseShare: 'Expenses by category', reportIncomeShare: 'Income by source', reportDailySpending: 'Daily spending trend', reportBudgets: 'Budget usage', reportSpent: 'Spent' },
     zh: { monthlyReport: '\u6708\u5ea6\u62a5\u544a', monthlyAnalysis: '\u6708\u5ea6\u6536\u652f\u5206\u6790', monthlyReportNoData: '\u672c\u6708\u6682\u65e0\u6536\u5165\u6216\u652f\u51fa\u8bb0\u5f55\u3002', refreshReport: '\u5237\u65b0\u62a5\u544a', reportIncome: '\u6536\u5165', reportExpenses: '\u652f\u51fa', reportNet: '\u51c0\u989d', reportExpenseShare: '\u6309\u9884\u7b97\u5206\u7c7b\u7684\u652f\u51fa', reportIncomeShare: '\u6309\u6765\u6e90\u5206\u7c7b\u7684\u6536\u5165', reportDailySpending: '\u6bcf\u65e5\u652f\u51fa\u8d8b\u52bf', reportBudgets: '\u9884\u7b97\u4f7f\u7528\u60c5\u51b5', reportSpent: '\u5df2\u652f\u51fa' }
@@ -126,6 +131,7 @@ export function detectLanguage() {
 
 export function translate(language, key) {
     if (tokenUsageMessages[language]?.[key]) return tokenUsageMessages[language][key];
+    if (assistantImageMessages[language]?.[key]) return assistantImageMessages[language][key];
     if (monthlyReportMessages[language]?.[key]) return monthlyReportMessages[language][key];
     if (language === 'zh' && Object.hasOwn(zhAiMessages, key)) return zhAiMessages[key];
     return messages[language]?.[key] ?? enAssistantMessages[key] ?? messages.en[key] ?? key;

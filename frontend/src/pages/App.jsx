@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import { fetchLatestFxRates } from '../api/exchange-rates.js';
 import { clearAnonymousData, emptyFinanceData, hasFinanceData, loadAnonymousProfile, loadAnonymousData, loadServerData, mergeFinanceData, saveAnonymousProfile, saveAnonymousData, saveServerData } from '../data/finance-data.js';
@@ -48,6 +48,8 @@ export function App() {
     return currencies.includes(saved) ? saved : 'USD';
   });
   const [fx, setFx] = useState({ rates: null, date: '', status: 'idle', stale: false });
+  const serverSaveQueue = useRef(Promise.resolve());
+  const serverSaveVersion = useRef(0);
   const t = (key) => translate(language, key);
 
   useEffect(() => {
@@ -166,13 +168,18 @@ export function App() {
       saveAnonymousData(financeData);
       return undefined;
     }
+    const version = ++serverSaveVersion.current;
     const timer = setTimeout(() => {
       setSaveStatus('saving');
-      saveServerData(financeData)
+      serverSaveQueue.current = serverSaveQueue.current
+        .catch(() => undefined)
+        .then(() => saveServerData(financeData))
         .then(() => {
-          setSaveStatus('saved');
+          if (version === serverSaveVersion.current) setSaveStatus('saved');
         })
-        .catch(() => setSaveStatus('failed'));
+        .catch(() => {
+          if (version === serverSaveVersion.current) setSaveStatus('failed');
+        });
     }, 450);
     return () => clearTimeout(timer);
   }, [financeData, role, financeDataReady]);

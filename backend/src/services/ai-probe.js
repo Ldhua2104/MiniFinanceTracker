@@ -343,6 +343,11 @@ function streamedText(providerType, payload) {
   return payload.choices?.[0]?.delta?.content ?? '';
 }
 
+function parseImageDataUrl(dataUrl) {
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+  return match ? { mimeType: match[1], data: match[2] } : null;
+}
+
 export async function streamAiChat(provider, model, apiKey, messages, onToken, { signal, onUsage } = {}) {
   if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
   let endpoint;
@@ -362,7 +367,22 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
     const path = basePath.endsWith('/messages') ? basePath : `${basePath}/messages`;
     url = new URL(`${path}${endpoint.search}`, endpoint.origin);
     headers = { ...headers, 'x-api-key': apiKey.trim(), 'anthropic-version': '2023-06-01' };
-    body = { model: model.name, max_tokens: 1200, system, messages: dialog, stream: true };
+    body = {
+      model: model.name,
+      max_tokens: 1200,
+      system,
+      messages: dialog.map(({ role, content, imageDataUrls }) => imageDataUrls?.length ? ({
+        role,
+        content: [
+          ...(content ? [{ type: 'text', text: content }] : []),
+          ...imageDataUrls.map((image) => {
+            const parsed = parseImageDataUrl(image);
+            return { type: 'image', source: { type: 'base64', media_type: parsed?.mimeType || 'image/jpeg', data: parsed?.data || '' } };
+          })
+        ]
+      }) : ({ role, content })),
+      stream: true
+    };
   } else if (provider.type === 'gemini') {
     const path = basePath.includes(':generateContent')
       ? basePath.replace(':generateContent', ':streamGenerateContent')
@@ -380,7 +400,16 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
           try { result = JSON.parse(message.content); } catch { /* Keep a text result for compatible providers. */ }
           return { role: 'user', parts: [{ functionResponse: { name: message.name, response: { result } } }] };
         }
-        return { role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] };
+        return {
+          role: message.role === 'assistant' ? 'model' : 'user',
+          parts: [
+            ...(message.content ? [{ text: message.content }] : []),
+            ...(message.imageDataUrls || []).map((image) => {
+              const parsed = parseImageDataUrl(image);
+              return { inlineData: { mimeType: parsed?.mimeType || 'image/jpeg', data: parsed?.data || '' } };
+            })
+          ]
+        };
       }),
       generationConfig: { maxOutputTokens: 1200 }
     };
@@ -388,7 +417,19 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
     const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
     url = new URL(`${path}${endpoint.search}`, endpoint.origin);
     headers.authorization = `Bearer ${apiKey.trim()}`;
-    body = { model: model.name, messages, max_tokens: 1200, stream: true, stream_options: { include_usage: true } };
+    body = {
+      model: model.name,
+      messages: messages.map(({ role, content, imageDataUrls }) => imageDataUrls?.length ? ({
+        role,
+        content: [
+          ...(content ? [{ type: 'text', text: content }] : []),
+          ...imageDataUrls.map((image) => ({ type: 'image_url', image_url: { url: image } }))
+        ]
+      }) : ({ role, content })),
+      max_tokens: 1200,
+      stream: true,
+      stream_options: { include_usage: true }
+    };
   }
 
   const address = await resolvePublicAddress(url.hostname);

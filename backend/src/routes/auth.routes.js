@@ -538,10 +538,11 @@ const transactionDraftTool = {
       amount: { type: 'string', pattern: '^$|^\\d{1,12}(?:\\.\\d{1,2})?$', description: 'Original receipt amount, without conversion. Leave empty if unclear.' },
       currency: { type: 'string', enum: [...CURRENCIES, 'unknown'], description: 'Currency printed on the receipt; use unknown if not clear. Do not convert.' },
       transactionDate: { type: 'string', pattern: '^$|^\\d{4}-\\d{2}-\\d{2}$' },
+      transactionTime: { type: 'string', pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d$', description: 'Time in 24-hour HH:mm format. Use supplied current time if no transaction time is visible.' },
       note: { type: 'string', maxLength: 500, description: 'Concrete purchase details such as items, platform, and merchant.' },
       categoryName: { type: 'string', maxLength: 80 }
     },
-    required: ['title', 'type', 'amount', 'currency', 'transactionDate', 'note', 'categoryName'],
+    required: ['title', 'type', 'amount', 'currency', 'transactionDate', 'transactionTime', 'note', 'categoryName'],
     additionalProperties: false
   }
 };
@@ -582,6 +583,8 @@ authRouter.post('/assistant/transaction-draft', requireCsrf, requireUser, async 
     }
     const currentDateParts = new Intl.DateTimeFormat('en-US', { timeZone: profile?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
     const currentDate = `${currentDateParts.find((part) => part.type === 'year')?.value}-${currentDateParts.find((part) => part.type === 'month')?.value}-${currentDateParts.find((part) => part.type === 'day')?.value}`;
+    const currentTimeParts = new Intl.DateTimeFormat('en-GB', { timeZone: profile?.timezone || 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+    const currentTime = `${currentTimeParts.find((part) => part.type === 'hour')?.value}:${currentTimeParts.find((part) => part.type === 'minute')?.value}`;
     const imageDataUrls = [];
     const validateImage = (dataUrl) => {
       const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
@@ -608,6 +611,7 @@ authRouter.post('/assistant/transaction-draft', requireCsrf, requireUser, async 
     let systemPrompt = prompt.replace(/^\uFEFF/, '').trim();
     if (!systemPrompt) return res.status(503).json({ error: { code: 'AI_DRAFT_PROMPT_UNAVAILABLE' }, meta: { requestId: req.requestId } });
     systemPrompt += `\n\nUser interface language: ${input.language === 'zh' ? 'Simplified Chinese' : 'English'}. Write the title and note in this language, even if the receipt uses another language. Current date: ${currentDate}. Selected transaction type: ${input.type}; only change it if the user explicitly requests another type. Selected account: ${account.name}, currency ${account.currency}. Existing expense budget choices (use exact names): ${JSON.stringify(choicesByType.expense.map(({ name }) => name))}. Existing income source choices (use exact names): ${JSON.stringify(choicesByType.income.map(({ name }) => name))}.`;
+    systemPrompt += ` Current time in the user's timezone in 24-hour HH:mm format: ${currentTime}. For transactionTime, use a time explicitly shown in the text or receipt; if none is clear, use this current time exactly. Do not guess a receipt time.`;
     const promptMessages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: input.prompt || 'Extract the transaction details from the attached image and fill the draft.', imageDataUrls }
@@ -632,6 +636,7 @@ authRouter.post('/assistant/transaction-draft', requireCsrf, requireUser, async 
       amount: z.string().regex(/^$|^\d{1,12}(?:\.\d{1,2})?$/),
       currency: z.enum([...CURRENCIES, 'unknown']),
       transactionDate: z.string().regex(/^$|^\d{4}-\d{2}-\d{2}$/),
+      transactionTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
       note: z.string().max(500),
       categoryName: z.string().max(80)
     }).strict().safeParse(values);
@@ -643,7 +648,7 @@ authRouter.post('/assistant/transaction-draft', requireCsrf, requireUser, async 
       || draftChoices.find((choice) => choice.name.trim().toLocaleLowerCase() === 'other');
     return res.json({
       data: {
-        draft: { title: draft.title, type: draft.type, amount: draft.amount, transactionDate: draft.transactionDate || currentDate, note: draft.note, categoryId: category?.id || '', categoryName: category?.name || '', currency: draft.currency },
+        draft: { title: draft.title, type: draft.type, amount: draft.amount, transactionDate: draft.transactionDate || currentDate, transactionTime: draft.transactionTime, note: draft.note, categoryId: category?.id || '', categoryName: category?.name || '', currency: draft.currency },
         categoryMatched: Boolean(category && category.name.trim().toLocaleLowerCase() === normalizedCategory),
         currencyMatchesAccount: draft.currency === account.currency
       },
@@ -660,15 +665,24 @@ authRouter.post('/assistant/transaction-draft', requireCsrf, requireUser, async 
 const assistantChatInput = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
-    content: z.string().trim().min(1).max(8000)
+    content: z.string().trim().max(8000),
+    images: z.array(transactionDraftImage).max(4).optional().default([])
   }).strict()).min(1).max(40),
   selectedAccountId: z.string().uuid().optional().default(''),
   language: z.enum(['zh', 'en']).optional().default('en')
 }).strict().superRefine(({ messages }, context) => {
   if (messages.at(-1)?.role !== 'user') context.addIssue({ code: 'custom', path: ['messages'], message: 'The latest chat message must come from the user' });
+  if (messages.some((message) => !message.content.trim() && !message.images.length)) {
+    context.addIssue({ code: 'custom', path: ['messages'], message: 'Each message must contain text or an image' });
+  }
+  if (messages.some((message) => message.role === 'assistant' && message.images.length)) {
+    context.addIssue({ code: 'custom', path: ['messages'], message: 'Images can only be attached to user messages' });
+  }
   if (messages.reduce((total, message) => total + message.content.length, 0) > 30000) {
     context.addIssue({ code: 'custom', path: ['messages'], message: 'The conversation is too long' });
   }
+  const totalImageBytes = messages.reduce((total, message) => total + message.images.reduce((sum, image) => sum + Buffer.from(image.slice(image.indexOf(',') + 1), 'base64').length, 0), 0);
+  if (totalImageBytes > 20 * MAX_IMAGE_BYTES) context.addIssue({ code: 'custom', path: ['messages'], message: 'Attached images exceed the request size limit' });
 });
 
 const monthlyReportTool = {
@@ -747,9 +761,10 @@ const createTransactionTool = {
       note: { type: 'string', maxLength: 500 },
       categoryName: { type: 'string', maxLength: 80 },
       accountId: { type: 'string', format: 'uuid' },
-      transactionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+      transactionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      transactionTime: { type: 'string', pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d$', description: 'Transaction time in 24-hour HH:mm.' }
     },
-    required: ['type', 'amount', 'currency', 'title'],
+    required: ['type', 'amount', 'currency', 'title', 'transactionTime'],
     additionalProperties: false
   }
 };
@@ -781,6 +796,11 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
     if (!parsed.success) {
       return res.status(400).json({ error: { code: 'AI_CHAT_INVALID_INPUT', fields: z.flattenError(parsed.error).fieldErrors }, meta: { requestId: req.requestId } });
     }
+    const invalidChatImage = parsed.data.messages.some((message) => message.images.some((image) => {
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+      return !match || !imageSignatureIsValid(match[1], Buffer.from(match[2], 'base64'));
+    }));
+    if (invalidChatImage) return res.status(400).json({ error: { code: 'AI_CHAT_INVALID_IMAGE' }, meta: { requestId: req.requestId } });
     const settings = await readAiSettings(req.user._id);
     const modelId = settings.assignments?.conversation;
     if (!modelId) return res.status(400).json({ error: { code: 'AI_CHAT_MODEL_UNASSIGNED' }, meta: { requestId: req.requestId } });
@@ -795,7 +815,7 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
 
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...parsed.data.messages
+      ...parsed.data.messages.map(({ role, content, images }) => ({ role, content, ...(images.length ? { imageDataUrls: images } : {}) }))
     ];
     let report = null;
     let transactionDraft = null;
@@ -859,10 +879,13 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
       const timezone = profile?.timezone || 'UTC';
       const currentDateParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
       const currentDate = `${currentDateParts.find((part) => part.type === 'year')?.value}-${currentDateParts.find((part) => part.type === 'month')?.value}-${currentDateParts.find((part) => part.type === 'day')?.value}`;
+      const currentTimeParts = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+      const currentTime = `${currentTimeParts.find((part) => part.type === 'hour')?.value}:${currentTimeParts.find((part) => part.type === 'minute')?.value}`;
       const toolMessages = [
-        { ...messages[0], content: `${messages[0].content}\n\nThe user asked to create a transaction. Prepare a draft only; never persist it. The user's selected interface language is ${parsed.data.language === 'zh' ? 'Simplified Chinese' : 'English'}; use it for the title, note, and any clarification. Current date in the user's timezone (${timezone}) is ${currentDate}. If the user does not name an account, use this selected account: ${JSON.stringify(selectedAccount)}. Available accounts: ${JSON.stringify(accounts)}. Available expense budgets/categories (use exact names; use Other when unclear): ${JSON.stringify(choicesByType.expense.map(({ id, name }) => ({ id, name })))}. Available income sources: ${JSON.stringify(choicesByType.income.map(({ id, name }) => ({ id, name })))}. Call create_transaction only when amount, currency, title, and income/expense type are all clear. Do not infer currency from the selected account or a symbol that is ambiguous; ask which currency if unclear. The note is optional; when present, keep it concise and format visible items one per line as item name*quantity line-total, then add merchant/platform only if known. If any required detail is unclear, ask a short question instead of calling the tool.` },
+        { ...messages[0], content: `${messages[0].content}\n\nThe user asked to create a transaction. Prepare a draft only; never persist it. The user's selected interface language is ${parsed.data.language === 'zh' ? 'Simplified Chinese' : 'English'}; use it for the title, note, and any clarification. Current date in the user's timezone (${timezone}) is ${currentDate}. If the user does not name an account, use this selected account: ${JSON.stringify(selectedAccount)}. Available accounts: ${JSON.stringify(accounts)}. Available expense budgets/categories (use exact names; use Other when unclear): ${JSON.stringify(choicesByType.expense.map(({ id, name }) => ({ id, name })))}. Available income sources: ${JSON.stringify(choicesByType.income.map(({ id, name }) => ({ id, name })))}. Call create_transaction only when amount, currency, title, and income/expense type are all clear. Do not infer currency from the selected account or a symbol that is ambiguous; ask which currency if unclear. The note is optional; when present, list visible items one per line as item name*quantity line-total, preserving the printed currency. Prefix the first item line with a visible merchant/store label when known; add a final "交易站点：{site}" or "Transaction site: {site}" line only when the site/domain is visible. Use a title like "Amazon 订单：苹果与饮料冲剂" or "Amazon order: apples and drink mix" when supported by the details. Do not guess merchant, site, item, quantity, or price details. If any required detail is unclear, ask a short question instead of calling the tool.` },
         ...messages.slice(1)
       ];
+      toolMessages[0].content += ` The current time in the user's timezone is ${currentTime} (24-hour HH:mm). Include transactionTime on every tool call; use an explicitly stated time, or this current time if none was stated. Do not guess.`;
       try {
         toolDecision = await requestAiToolCalls(provider, model, settings.apiKeys[provider.id], toolMessages, [createTransactionTool], { mode: 'auto' });
       } catch (error) {
@@ -892,6 +915,7 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
           transactionDraftText = transactionClarification(parsed.data.language, fields);
         } else {
           const dateCandidate = typeof args.transactionDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.transactionDate) ? args.transactionDate : currentDate;
+          const timeCandidate = typeof args.transactionTime === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(args.transactionTime) ? args.transactionTime : currentTime;
           const categoryName = typeof args.categoryName === 'string' ? args.categoryName.trim() : '';
           const choices = choicesByType[type];
           const fallbackCategory = choices.find((item) => item.name.trim().toLowerCase() === 'other') || choices[0];
@@ -907,7 +931,8 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
             categoryId: category?.id || '',
             categoryName: category?.name || '',
             accountId: targetAccount?.id || '',
-            transactionDate: dateCandidate
+            transactionDate: dateCandidate,
+            transactionTime: timeCandidate
           };
           transactionDraftText = parsed.data.language === 'zh'
             ? '\u6211\u5df2\u5c06\u6536\u652f\u8349\u7a3f\u586b\u5165\u53f3\u4fa7\u7f16\u8f91\u9762\u677f\uff0c\u8bf7\u6838\u5bf9\u540e\u624b\u52a8\u4fdd\u5b58\u3002'

@@ -272,13 +272,16 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
   const [note, setNote] = useState(initialTransaction?.note ?? draftTransaction?.note ?? '');
   const [categoryId, setCategoryId] = useState(initialTransaction?.categoryId ?? draftTransaction?.categoryId ?? '');
   const [transactionDate, setTransactionDate] = useState(initialTransaction?.transactionDate ?? draftTransaction?.transactionDate ?? openedAt?.transactionDate ?? today());
+  const [transactionTime, setTransactionTime] = useState(initialTransaction
+    ? (initialTransaction.transactionTime ?? '')
+    : (draftTransaction?.transactionTime || openedAt?.transactionTime || localTransactionTimestamp().transactionTime));
   const [monthlyAuto, setMonthlyAuto] = useState(Boolean(initialTransaction?.recurring?.enabled));
   const [recurrenceSchedule, setRecurrenceSchedule] = useState(initialTransaction?.recurring?.schedule ?? 'month-start');
   const [recurrenceDay, setRecurrenceDay] = useState(String(initialTransaction?.recurring?.dayOfMonth ?? Number((initialTransaction?.transactionDate ?? openedAt?.transactionDate ?? today()).slice(-2))));
   const [recurrenceTime, setRecurrenceTime] = useState(initialTransaction?.recurring?.time ?? initialTransaction?.transactionTime ?? openedAt?.transactionTime ?? '09:00');
   const [addingBudget, setAddingBudget] = useState(false);
   const [addingIncomeSource, setAddingIncomeSource] = useState(false);
-  const [noteImages, setNoteImages] = useState(initialTransaction?.noteImages ?? (initialTransaction?.noteImage ? [initialTransaction.noteImage] : []));
+  const [noteImages, setNoteImages] = useState(initialTransaction?.noteImages ?? (initialTransaction?.noteImage ? [initialTransaction.noteImage] : (draftTransaction?.noteImages ?? [])));
   const [aiDraftOpen, setAiDraftOpen] = useState(false);
   const [aiDraftNotice, setAiDraftNotice] = useState(draftTransaction && draftCurrency !== draftAccount?.currency
     ? draftConvertedCents === null
@@ -289,9 +292,6 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const isGeneratedOccurrence = Boolean(initialTransaction?.recurrenceSourceId);
-  const transactionTime = initialTransaction
-    ? (initialTransaction.transactionTime || '')
-    : (openedAt?.transactionTime || '');
   const selectedAccount = accounts.find((item) => item.id === accountId) ?? account ?? accounts[0] ?? null;
   const categoryMap = new Map(categories.map((item) => [item.id, item]));
   const choiceMap = new Map();
@@ -436,9 +436,10 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
     setType(draft.type);
     setCategoryId(draft.categoryId);
     setTransactionDate(draft.transactionDate || today());
+    setTransactionTime(draft.transactionTime || localTransactionTimestamp().transactionTime);
     setNote(draft.note);
     setRecognizedAmount({ amount: draft.amount, currency: recognizedCurrency || 'unknown', categoryMatched: result.categoryMatched, rates: exchange?.rates, rateDate: exchange?.date, stale: exchange?.stale });
-    setNoteImages((current) => [...current, ...result.addedImages]);
+    setNoteImages((current) => [...current, ...result.addedImages.filter((image) => !current.includes(image))]);
     setAiDraftNotice(!recognizedCurrency
       ? t('aiDraftCurrencyUnknown')
       : recognizedCurrency !== selectedAccount.currency
@@ -477,6 +478,7 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
           {addingIncomeSource && <IncomeSourceForm embedded categories={categories} t={t} onCancel={() => setAddingIncomeSource(false)} onSubmit={(source) => { onCreateIncomeSource(source); setCategoryId(source.id); setAddingIncomeSource(false); }} />}
           </div>
           <div className="field"><span>{t('date')}</span><div className="transaction-date-time"><input name="transactionDate" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} required /><span className="transaction-weekday">{weekday}</span></div></div>
+          <label className="field"><span>{t('recurrenceTime')}</span><input name="transactionTime" type="time" value={transactionTime} onChange={(event) => setTransactionTime(event.target.value)} required /></label>
           {!isGeneratedOccurrence && <div className="field recurring-field">
             <label className="recurring-toggle"><input type="checkbox" checked={monthlyAuto} onChange={(event) => setMonthlyAuto(event.target.checked)} /><span>{t('monthlyAutoAdd')}</span></label>
             {monthlyAuto && <div className="recurring-options">
