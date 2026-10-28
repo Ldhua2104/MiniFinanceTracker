@@ -1,13 +1,106 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { convertCents } from '../api/exchange-rates.js';
 import { centsToAmount, currencies, currencySymbol, formatSignedCents, formatTransactionTime, localTransactionTimestamp, moneyToCents, today } from '../utils/finance.js';
 import { makeMonthlyRecurrence } from '../data/recurrence.js';
 import { PageTitle } from '../components/PageTitle.jsx';
+import { MonthlyReportCard } from '../components/MonthlyReport.jsx';
 import { incomeSourceLabel } from '../utils/income.js';
+import { budgetColors } from '../utils/colors.js';
+import { apiRequest } from '../api/client.js';
 
-export function ActivityPage({ items, allTransactions, categories, budgets, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit }) {
+function amountFromCents(value) {
+  return Number(value) / 100;
+}
+
+function createMonthlyReport({ month, transactions, categories, budgets }) {
+  const records = transactions.filter((item) => item.transactionDate.startsWith(month));
+  if (!records.length) return { status: 'no_data', month };
+
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const budgetByCategory = new Map(budgets.map((budget) => [budget.categoryId, budget]));
+  const totals = new Map();
+  const expenseGroups = new Map();
+  const incomeGroups = new Map();
+  const daily = new Map();
+  const budgetSpent = new Map();
+  const getTotal = (currency) => {
+    if (!totals.has(currency)) totals.set(currency, { income: 0n, expense: 0n, incomeCount: 0, expenseCount: 0 });
+    return totals.get(currency);
+  };
+  for (const transaction of records) {
+    const amount = moneyToCents(transaction.amount) ?? 0n;
+    const total = getTotal(transaction.currency);
+    total[transaction.type] += amount;
+    total[`${transaction.type}Count`] += 1;
+    const groups = transaction.type === 'expense' ? expenseGroups : incomeGroups;
+    const groupKey = `${transaction.categoryId || '__other__'}:${transaction.currency}`;
+    if (!groups.has(groupKey)) {
+      const category = categoryById.get(transaction.categoryId);
+      const budget = transaction.type === 'expense' ? budgetByCategory.get(transaction.categoryId) : null;
+      groups.set(groupKey, { id: transaction.categoryId || '__other__', name: category?.name || 'Other', currency: transaction.currency, color: budget?.color || category?.color || budgetColors[groups.size % budgetColors.length], amount: 0n, count: 0 });
+    }
+    const group = groups.get(groupKey);
+    group.amount += amount;
+    group.count += 1;
+    if (transaction.type === 'expense') {
+      const dayKey = `${transaction.currency}:${transaction.transactionDate}`;
+      daily.set(dayKey, (daily.get(dayKey) || 0n) + amount);
+      const budgetKey = `${transaction.categoryId}:${transaction.currency}`;
+      budgetSpent.set(budgetKey, (budgetSpent.get(budgetKey) || 0n) + amount);
+    }
+  }
+
+  const toPieCharts = (groups) => {
+    const byCurrency = new Map();
+    for (const group of groups.values()) {
+      if (!byCurrency.has(group.currency)) byCurrency.set(group.currency, []);
+      byCurrency.get(group.currency).push(group);
+    }
+    return [...byCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([currency, items]) => {
+      const total = items.reduce((sum, item) => sum + item.amount, 0n);
+      const points = items.sort((a, b) => a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0).map((item) => ({
+        id: item.id,
+        label: item.name,
+        value: amountFromCents(item.amount),
+        color: item.color,
+        sharePercent: total ? Number((item.amount * 10000n) / total) / 100 : 0
+      }));
+      return { currency, total: amountFromCents(total), points };
+    });
+  };
+  const expensePieCharts = toPieCharts(expenseGroups);
+  const incomePieCharts = toPieCharts(incomeGroups);
+  const monthLength = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+  const dayCount = month === today().slice(0, 7) ? Number(today().slice(-2)) : monthLength;
+  const dailyExpenseTrends = [...totals.keys()].sort().map((currency) => ({
+    currency,
+    points: Array.from({ length: dayCount }, (_, index) => {
+      const date = `${month}-${String(index + 1).padStart(2, '0')}`;
+      return { date, amount: amountFromCents(daily.get(`${currency}:${date}`) || 0n) };
+    })
+  })).filter((trend) => trend.points.some((point) => point.amount > 0));
+  const budgetSummaries = budgets.map((budget) => {
+    const spent = budgetSpent.get(`${budget.categoryId}:${budget.currency}`) || 0n;
+    return { name: budget.name, currency: budget.currency, monthlyLimit: budget.amount, spent: (amountFromCents(spent)).toFixed(2) };
+  });
+  return {
+    status: 'ok',
+    month,
+    currencySummaries: [...totals.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([currency, total]) => ({ currency, income: amountFromCents(total.income), expense: amountFromCents(total.expense), net: amountFromCents(total.income - total.expense) })),
+    expensePieCharts,
+    incomePieCharts,
+    dailyExpenseTrends,
+    budgets: budgetSummaries
+  };
+}
+
+export function ActivityPage({ items, allTransactions, categories, budgets, accounts, month, onMonthChange, locale, t, language, timeFormat, reportCurrency, onReportCurrencyChange, fx, onRefreshFx, onDelete, onAdd, onEdit, user }) {
   const [filters, setFilters] = useState({ type: '', startDate: '', endDate: '', minimum: '', maximum: '', budgetId: '', accountId: '', sourceId: '', autoAdd: '' });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [monthlyReportOpen, setMonthlyReportOpen] = useState(false);
+  const [serverReport, setServerReport] = useState(null);
+  const [reportRefreshVersion, setReportRefreshVersion] = useState(0);
+  const [reportRefreshing, setReportRefreshing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
   const monthDate = new Date(`${month}-01T12:00:00`);
@@ -70,6 +163,23 @@ export function ActivityPage({ items, allTransactions, categories, budgets, acco
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const pageItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const localMonthlyReport = useMemo(() => createMonthlyReport({ month, transactions: allTransactions, categories, budgets }), [month, allTransactions, categories, budgets, reportRefreshVersion]);
+  const monthlyReport = serverReport?.month === month ? serverReport : localMonthlyReport;
+  useEffect(() => {
+    let active = true;
+    if (!monthlyReportOpen || !user) {
+      setServerReport(null);
+      setReportRefreshing(false);
+      return () => { active = false; };
+    }
+    setReportRefreshing(true);
+    const finish = () => { if (active) setReportRefreshing(false); };
+    apiRequest(`/auth/reports/monthly?month=${encodeURIComponent(month)}`)
+      .then((response) => { if (active) setServerReport(response.data); })
+      .catch(() => { if (active) setServerReport(null); })
+      .finally(finish);
+    return () => { active = false; };
+  }, [monthlyReportOpen, month, user?.id, reportRefreshVersion]);
   useEffect(() => setCurrentPage(1), [month, filters]);
   useEffect(() => setCurrentPage((page) => Math.min(page, totalPages)), [totalPages]);
 
@@ -95,6 +205,14 @@ export function ActivityPage({ items, allTransactions, categories, budgets, acco
         <span className={`activity-stat net ${net < 0n ? 'negative' : 'positive'}`}><small>{t('balance')}</small><strong>{totalsAvailable ? formatSignedCents(net, locale, reportCurrency) : '—'}</strong></span>
         </div>
       </section>
+      <div className="activity-report-entry">
+        <button className="secondary-button" type="button" aria-expanded={monthlyReportOpen} onClick={() => setMonthlyReportOpen((open) => !open)}>
+          <span>{t('monthlyAnalysis')}</span><svg className={`budget-expand-mark ${monthlyReportOpen ? 'is-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+      </div>
+      {monthlyReportOpen && (monthlyReport.status === 'ok'
+        ? <MonthlyReportCard report={monthlyReport} language={language} t={t} refreshing={reportRefreshing} onRefresh={() => setReportRefreshVersion((version) => version + 1)} />
+        : <section className="monthly-report-empty"><span>{t('monthlyReportNoData')}</span><button type="button" onClick={() => setReportRefreshVersion((version) => version + 1)} disabled={reportRefreshing}>{t('refreshReport')}</button></section>)}
       <details className="activity-filters" open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)}>
         <summary>{t('filterTransactions')}{activeFilterCount > 0 && <span className="activity-filter-count">{activeFilterCount}</span>}<svg className="budget-expand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
         <div className="activity-filter-grid">

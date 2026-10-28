@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, apiStream } from '../api/client.js';
 import { PageTitle } from '../components/PageTitle.jsx';
 import { MarkdownContent } from '../components/MarkdownContent.jsx';
+import { MonthlyReportCard } from '../components/MonthlyReport.jsx';
 
 function readConversations(storageKey) {
   try {
@@ -30,6 +31,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  const [streamingReport, setStreamingReport] = useState(null);
   const [streamingConversationId, setStreamingConversationId] = useState('');
   const [sendError, setSendError] = useState('');
   const messageAreaRef = useRef(null);
@@ -86,7 +88,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
   useEffect(() => {
     const area = messageAreaRef.current;
     if (area) area.scrollTop = area.scrollHeight;
-  }, [selectedConversation?.id, selectedConversation?.messages?.length, sending]);
+  }, [selectedConversation?.id, selectedConversation?.messages?.length, sending, streamingReport]);
 
   function createConversation() {
     const conversation = { id: crypto.randomUUID(), title: t('newConversation'), createdAt: new Date().toISOString(), messages: [] };
@@ -121,6 +123,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     setDraft('');
     setSending(true);
     setStreamingText('');
+    setStreamingReport(null);
     setStreamingConversationId(conversationId);
     setStoredConversations((current) => ({
       ...current,
@@ -128,24 +131,31 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     }));
     let responseText = '';
     let streamedUsage = null;
+    let responseReport = null;
     try {
       await apiStream('/auth/assistant/chat', {
         method: 'POST',
-        body: JSON.stringify({ messages: contextMessages })
+        body: JSON.stringify({ messages: contextMessages, language })
       }, (event, data) => {
         if (event === 'token' && typeof data.text === 'string') {
           responseText += data.text;
           setStreamingText(responseText);
         }
-        if (event === 'usage' && Number.isFinite(data.totalTokens)) streamedUsage = data;
+        if (event === 'usage' && Number.isFinite(data.totalTokens)) {
+          streamedUsage = [...(streamedUsage ?? []), data];
+        }
+        if (event === 'report' && data.report) {
+          responseReport = data.report;
+          setStreamingReport(data.report);
+        }
       });
-      const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, createdAt: new Date().toISOString() };
+      const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, report: responseReport, createdAt: new Date().toISOString() };
       setStoredConversations((current) => ({
         ...current,
         items: current.items.map((item) => item.id === conversationId ? {
           ...item,
           messages: [...(item.messages ?? []), assistantMessage],
-          tokenUsage: streamedUsage ? [...(item.tokenUsage ?? []), { ...streamedUsage, createdAt: new Date().toISOString() }] : (item.tokenUsage ?? [])
+          tokenUsage: streamedUsage?.length ? [...(item.tokenUsage ?? []), ...streamedUsage.map((usage) => ({ ...usage, createdAt: new Date().toISOString() }))] : (item.tokenUsage ?? [])
         } : item)
       }));
     } catch (error) {
@@ -163,10 +173,13 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
       setSendError(error.code === 'UNAUTHENTICATED' ? 'assistantSignInRequired'
         : error.code === 'AI_CHAT_MODEL_UNASSIGNED' || error.code === 'AI_CHAT_MODEL_NOT_FOUND' ? 'assistantModelUnassigned'
           : error.code === 'AI_CHAT_KEY_MISSING' || error.code === 'AI_TEST_KEY_MISSING' ? 'assistantModelMissingKey'
-            : error.code === 'AI_TEST_AUTH_FAILED' ? 'aiTestAuthFailed' : 'assistantSendFailed');
+            : error.code === 'AI_TEST_AUTH_FAILED' ? 'aiTestAuthFailed'
+              : error.code === 'AI_TOOL_CALL_UNSUPPORTED' ? 'assistantToolUnsupported'
+                : error.code === 'AI_TOOL_CALL_NOT_SELECTED' ? 'assistantToolNotSelected' : 'assistantSendFailed');
     } finally {
       setSending(false);
       setStreamingText('');
+      setStreamingReport(null);
       setStreamingConversationId('');
     }
   }
@@ -199,7 +212,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
         </header>
 
         <div className={`assistant-message-area ${selectedConversation?.messages?.length ? 'has-messages' : ''}`} ref={messageAreaRef} aria-live="polite">
-          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div><MarkdownContent content={message.content} /></div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
+          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div><MarkdownContent content={message.content} />{message.report && <MonthlyReportCard report={message.report} language={language} t={t} />}</div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}{streamingReport && <MonthlyReportCard report={streamingReport} language={language} t={t} />}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
         </div>
 
         <div className="assistant-composer-wrap">

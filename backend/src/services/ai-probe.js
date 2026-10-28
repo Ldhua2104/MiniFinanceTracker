@@ -175,6 +175,115 @@ export async function completeAiChat(provider, model, apiKey, messages) {
   return text.trim();
 }
 
+function geminiFunctionSchema(schema) {
+  const typeMap = { object: 'OBJECT', string: 'STRING', number: 'NUMBER', integer: 'INTEGER', boolean: 'BOOLEAN', array: 'ARRAY' };
+  return {
+    ...schema,
+    ...(schema.type ? { type: typeMap[schema.type] || schema.type } : {}),
+    ...(schema.properties ? { properties: Object.fromEntries(Object.entries(schema.properties).map(([key, value]) => [key, geminiFunctionSchema(value)])) } : {}),
+    ...(schema.items ? { items: geminiFunctionSchema(schema.items) } : {})
+  };
+}
+
+export async function requestAiToolCalls(provider, model, apiKey, messages, tools) {
+  if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
+  let endpoint;
+  try { endpoint = new URL(provider.endpoint); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' }); }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw Object.assign(new Error(), { code: 'AI_TEST_ENDPOINT_INVALID' });
+  if (endpoint.protocol !== 'https:') throw Object.assign(new Error(), { code: 'AI_TEST_INSECURE_ENDPOINT' });
+
+  const basePath = endpoint.pathname.replace(/\/+$/, '');
+  const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n');
+  const dialog = messages.filter((message) => message.role !== 'system');
+  let url;
+  let headers = { 'content-type': 'application/json', accept: 'application/json' };
+  let body;
+  if (provider.type === 'anthropic') {
+    const path = basePath.endsWith('/messages') ? basePath : `${basePath}/messages`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers = { ...headers, 'x-api-key': apiKey.trim(), 'anthropic-version': '2023-06-01' };
+    body = {
+      model: model.name,
+      max_tokens: 1200,
+      system,
+      messages: dialog,
+      tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
+      tool_choice: { type: 'any' }
+    };
+  } else if (provider.type === 'gemini') {
+    const path = basePath.includes(':generateContent') ? basePath : `${basePath}/models/${encodeURIComponent(model.name)}:generateContent`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers['x-goog-api-key'] = apiKey.trim();
+    body = {
+      systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+      contents: dialog.map(({ role, content }) => ({ role: role === 'assistant' ? 'model' : 'user', parts: [{ text: content }] })),
+      tools: [{ functionDeclarations: tools.map(({ name, description, parameters }) => ({ name, description, parameters: geminiFunctionSchema(parameters) })) }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY' } },
+      generationConfig: { maxOutputTokens: 1200 }
+    };
+  } else {
+    const path = basePath.endsWith('/chat/completions') ? basePath : `${basePath}/chat/completions`;
+    url = new URL(`${path}${endpoint.search}`, endpoint.origin);
+    headers.authorization = `Bearer ${apiKey.trim()}`;
+    body = {
+      model: model.name,
+      messages,
+      tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
+      // `required` is rejected by some OpenAI-compatible reasoning endpoints
+      // (including DeepSeek thinking mode). Keep the request portable and
+      // verify below that the requested report function was actually called.
+      tool_choice: 'auto',
+      max_tokens: 1200,
+      stream: false
+    };
+  }
+
+  const address = await resolvePublicAddress(url.hostname);
+  const result = await postJson(url, headers, JSON.stringify(body), address);
+  if (result.status < 200 || result.status >= 300) {
+    if ([400, 404, 422].includes(result.status) && /tool.?call|function.?call|function call|not support|unsupported/i.test(result.body)) {
+      throw Object.assign(new Error(), { code: 'AI_TOOL_CALL_UNSUPPORTED' });
+    }
+    throw Object.assign(new Error(), { code: responseError(result.status), retryable: result.status === 429 || result.status >= 500 });
+  }
+  let payload;
+  try { payload = JSON.parse(result.body); } catch { throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' }); }
+
+  let toolCalls = [];
+  let text = '';
+  let providerMessage = null;
+  if (provider.type === 'anthropic') {
+    toolCalls = (payload.content || []).filter((block) => block.type === 'tool_use').map((block) => ({ id: block.id, name: block.name, arguments: block.input ?? {} }));
+    text = (payload.content || []).filter((block) => typeof block.text === 'string').map((block) => block.text).join('');
+    providerMessage = { role: 'assistant', content: payload.content || [] };
+  } else if (provider.type === 'gemini') {
+    const parts = payload.candidates?.[0]?.content?.parts ?? [];
+    toolCalls = parts.filter((part) => part.functionCall?.name).map((part, index) => ({ id: `gemini-${index}`, name: part.functionCall.name, arguments: part.functionCall.args ?? {} }));
+    text = parts.filter((part) => typeof part.text === 'string').map((part) => part.text).join('');
+    providerMessage = { role: 'assistant', toolParts: parts };
+  } else {
+    const message = payload.choices?.[0]?.message;
+    toolCalls = (message?.tool_calls || []).map((call) => ({ id: call.id, name: call.function?.name, arguments: call.function?.arguments ?? '{}' }));
+    if (message?.function_call?.name) toolCalls.push({ id: 'legacy-function-call', name: message.function_call.name, arguments: message.function_call.arguments ?? '{}' });
+    text = typeof message?.content === 'string' ? message.content : '';
+    providerMessage = message ? { ...message, role: 'assistant' } : null;
+  }
+  const rawUsage = payload.usage ?? payload.usageMetadata ?? {};
+  const inputTokens = Number(rawUsage.input_tokens ?? rawUsage.prompt_tokens ?? rawUsage.promptTokenCount ?? 0);
+  const outputTokens = Number(rawUsage.output_tokens ?? rawUsage.completion_tokens ?? rawUsage.candidatesTokenCount ?? 0);
+  const totalTokens = Number(rawUsage.total_tokens ?? rawUsage.totalTokenCount ?? inputTokens + outputTokens);
+  return {
+    toolCalls,
+    text,
+    providerMessage,
+    usage: Number.isFinite(totalTokens) && totalTokens > 0 ? {
+      inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0,
+      outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+      totalTokens
+    } : null
+  };
+}
+
 function postStreamingJson(url, headers, body, address, signal) {
   return new Promise((resolve, reject) => {
     const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
@@ -240,7 +349,15 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
     headers['x-goog-api-key'] = apiKey.trim();
     body = {
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      contents: dialog.map(({ role, content }) => ({ role: role === 'assistant' ? 'model' : 'user', parts: [{ text: content }] })),
+      contents: dialog.map((message) => {
+        if (message.role === 'assistant' && message.toolParts) return { role: 'model', parts: message.toolParts };
+        if (message.role === 'tool') {
+          let result = message.content;
+          try { result = JSON.parse(message.content); } catch { /* Keep a text result for compatible providers. */ }
+          return { role: 'user', parts: [{ functionResponse: { name: message.name, response: { result } } }] };
+        }
+        return { role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] };
+      }),
       generationConfig: { maxOutputTokens: 1200 }
     };
   } else {

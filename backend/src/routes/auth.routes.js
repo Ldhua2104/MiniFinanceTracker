@@ -12,7 +12,8 @@ import { CURRENCIES } from '../domain/constants.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { requireUser, SESSION_COOKIE, CSRF_COOKIE, sessionCookieOptions, clearSessionCookieOptions, csrfCookieOptions, signSession, verifySessionToken } from '../middleware/auth.js';
 import { decryptAiSettings, encryptAiSettings } from '../services/ai-settings-crypto.js';
-import { isAiProbeRetryable, probeAiModel, streamAiChat } from '../services/ai-probe.js';
+import { isAiProbeRetryable, probeAiModel, requestAiToolCalls, streamAiChat } from '../services/ai-probe.js';
+import { getMonthlyReport, resolveReportMonth } from '../services/finance-report.js';
 
 export const authRouter = Router();
 authRouter.use((_req, res, next) => {
@@ -482,7 +483,9 @@ const aiProbeErrorStatus = {
   AI_TEST_REDIRECT_UNSUPPORTED: 422,
   AI_TEST_INVALID_RESPONSE: 502,
   AI_TEST_RESPONSE_TOO_LARGE: 502,
-  AI_TEST_REQUEST_FAILED: 502
+  AI_TEST_REQUEST_FAILED: 502,
+  AI_TOOL_CALL_UNSUPPORTED: 422,
+  AI_TOOL_CALL_NOT_SELECTED: 422
 };
 
 authRouter.post('/ai-settings/test', requireCsrf, requireUser, async (req, res, next) => {
@@ -510,13 +513,74 @@ const assistantChatInput = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().trim().min(1).max(8000)
-  }).strict()).min(1).max(40)
+  }).strict()).min(1).max(40),
+  language: z.enum(['zh', 'en']).optional().default('en')
 }).strict().superRefine(({ messages }, context) => {
   if (messages.at(-1)?.role !== 'user') context.addIssue({ code: 'custom', path: ['messages'], message: 'The latest chat message must come from the user' });
   if (messages.reduce((total, message) => total + message.content.length, 0) > 30000) {
     context.addIssue({ code: 'custom', path: ['messages'], message: 'The conversation is too long' });
   }
 });
+
+const monthlyReportTool = {
+  name: 'get_monthly_report',
+  description: 'Get a factual monthly report for the authenticated user. Includes income and expenses by currency, expense categories and income sources with chart-ready pie data, daily expense trends, account activity, and budgets. If month is omitted, use the current month in the user profile timezone. Never combine different currencies.',
+  parameters: {
+    type: 'object',
+    properties: { month: { type: 'string', pattern: '^\\d{4}-(0[1-9]|1[0-2])$', description: 'Month in YYYY-MM format. Omit to use the current month.' } },
+    additionalProperties: false
+  }
+};
+
+authRouter.get('/reports/monthly', requireUser, async (req, res, next) => {
+  try {
+    const query = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional() }).strict().safeParse(req.query);
+    if (!query.success) {
+      return res.status(400).json({ error: { code: 'REPORT_INVALID_MONTH' }, meta: { requestId: req.requestId } });
+    }
+    const profile = await UserProfile.findOne({ userId: req.user._id }).select('timezone').lean();
+    const report = await getMonthlyReport(req.user._id, { month: query.data.month, timezone: profile?.timezone || 'UTC' });
+    return res.json({ data: report, meta: { requestId: req.requestId } });
+  } catch (error) { next(error); }
+});
+
+function asksForMonthlyReport(messages) {
+  const userMessages = messages.filter((message) => message.role === 'user').map((message) => message.content);
+  const latest = userMessages.at(-1) || '';
+  const history = userMessages.slice(0, -1).join('\n');
+  const priorAssistantQuestions = messages.filter((message) => message.role === 'assistant').slice(-4).map((message) => message.content).join('\n');
+  const reportIntent = /(get_monthly_report|月度|月报|报告|汇总|统计|分析|财务|本月|这个月|上个月|月支出|月收入|消费占比|消费趋势|支出占比|收入情况|收支|预算|消费|花费|monthly|this month|last month|report|summari[sz]e|financial|expense|income|spending|trend|share|budget)/i;
+  const monthMention = /(?:(?:19|20)\d{2}\s*年?\s*)?(?:1[0-2]|0?[1-9])\s*月(?:份)?|\b(?:19|20)\d{2}-(?:0[1-9]|1[0-2])\b/i;
+  if (reportIntent.test(latest)) return true;
+  const assistantAskedToClarifyMonth = /(?:哪一?年|年份|year|which\s+month|which\s+year|月份|month)/i.test(priorAssistantQuestions);
+  return monthMention.test(latest) && (reportIntent.test(history) || assistantAskedToClarifyMonth || latest.trim().length <= 16);
+}
+
+function appendMonthlyReportToolResult(provider, messages, toolDecision, call, report) {
+  const result = JSON.stringify(report);
+  // DeepSeek Chat Completions currently rejects tool-call messages inserted
+  // mid-conversation. Give it the verified result as a clearly marked data
+  // message instead; the tool has already executed server-side.
+  let hostname = '';
+  try { hostname = new URL(provider.endpoint).hostname.toLowerCase(); } catch { /* The endpoint was validated before this point. */ }
+  if (provider.type === 'compatible' && (hostname === 'deepseek.com' || hostname.endsWith('.deepseek.com'))) {
+    return [...messages, { role: 'user', content: `Verified result from get_monthly_report (trusted server data; answer the user's report request from these facts only):\n${result}` }];
+  }
+  if (provider.type === 'anthropic') {
+    const callBlock = toolDecision.providerMessage || { role: 'assistant', content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.arguments }] };
+    return [...messages, callBlock, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: result }] }];
+  }
+  if (provider.type === 'gemini') {
+    const callMessage = toolDecision.providerMessage || { role: 'assistant', toolParts: [{ functionCall: { name: call.name, args: call.arguments } }] };
+    return [...messages, callMessage, { role: 'tool', name: call.name, content: result }];
+  }
+  const callMessage = toolDecision.providerMessage || {
+    role: 'assistant', content: null,
+    tool_calls: [{ id: call.id, type: 'function', function: { name: call.name, arguments: typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments) } }]
+  };
+  if (callMessage.function_call) return [...messages, callMessage, { role: 'function', name: call.name, content: result }];
+  return [...messages, callMessage, { role: 'tool', tool_call_id: call.id, content: result }];
+}
 
 authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, next) => {
   try {
@@ -535,30 +599,84 @@ authRouter.post('/assistant/chat', requireCsrf, requireUser, async (req, res, ne
 
     const systemPrompt = (await readFile(assistantPromptFile, 'utf8')).replace(/^\uFEFF/, '').trim();
     if (!systemPrompt) return res.status(503).json({ error: { code: 'AI_CHAT_PROMPT_UNAVAILABLE' }, meta: { requestId: req.requestId } });
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...parsed.data.messages
+    ];
+    let report = null;
+    let toolUsage = null;
+    let toolDecision = null;
+    let reportToolCall = null;
+    const lastUserMessage = parsed.data.messages.at(-1)?.content || '';
+    if (asksForMonthlyReport(parsed.data.messages)) {
+      const profile = await UserProfile.findOne({ userId: req.user._id }).select('timezone').lean();
+      const timezone = profile?.timezone || 'UTC';
+      const currentMonth = resolveReportMonth('', timezone);
+      const toolMessages = [
+        { ...messages[0], content: `${messages[0].content}\n\nWhen the conversation requests a monthly finance report, you must call get_monthly_report. For a month without a year, use the current year. Current month in the user's timezone (${timezone}) is ${currentMonth}.` },
+        ...messages.slice(1)
+      ];
+      try {
+        toolDecision = await requestAiToolCalls(provider, model, settings.apiKeys[provider.id], toolMessages, [monthlyReportTool]);
+      } catch (error) {
+        const code = error.code === 'AI_TOOL_CALL_UNSUPPORTED' ? error.code : error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
+        console.warn(JSON.stringify({ event: 'assistant_tool_request_failed', requestId: req.requestId, tool: monthlyReportTool.name, providerType: provider.type, model: model.name, code }));
+        return res.status(aiProbeErrorStatus[code] || 502).json({ error: { code, retryable: isAiProbeRetryable(error) }, meta: { requestId: req.requestId } });
+      }
+      toolUsage = toolDecision.usage;
+      reportToolCall = toolDecision.toolCalls.find((item) => item.name === monthlyReportTool.name);
+      if (!reportToolCall) {
+        console.warn(JSON.stringify({ event: 'assistant_tool_not_selected', requestId: req.requestId, tool: monthlyReportTool.name, providerType: provider.type, model: model.name }));
+        return res.status(422).json({ error: { code: 'AI_TOOL_CALL_NOT_SELECTED' }, meta: { requestId: req.requestId } });
+      }
+      console.info(JSON.stringify({ event: 'assistant_tool_selected', requestId: req.requestId, tool: reportToolCall.name, providerType: provider.type, model: model.name }));
+      {
+        let argumentsValue = reportToolCall.arguments;
+        if (typeof argumentsValue === 'string') {
+          try { argumentsValue = JSON.parse(argumentsValue); } catch { argumentsValue = null; }
+        }
+        if (argumentsValue && typeof argumentsValue === 'object' && argumentsValue.month === null) delete argumentsValue.month;
+        const argumentsResult = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional() }).strict().safeParse(argumentsValue || {});
+        if (!argumentsResult.success) return res.status(400).json({ error: { code: 'AI_TOOL_INVALID_ARGUMENTS' }, meta: { requestId: req.requestId } });
+        const reportMonth = resolveReportMonth(lastUserMessage, timezone, argumentsResult.data.month);
+        report = await getMonthlyReport(req.user._id, { month: reportMonth, timezone });
+      }
+    }
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableEnded) controller.abort(); });
     try {
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...parsed.data.messages
-      ];
       res.status(200);
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders();
-      await streamAiChat(provider, model, settings.apiKeys[provider.id], messages, (text) => {
-        res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
-      }, {
-        signal: controller.signal,
-        onUsage: (usage) => res.write(`event: usage\ndata: ${JSON.stringify({ ...usage, modelId: model.id, modelName: model.customName || model.name })}\n\n`)
-      });
+      const sendUsage = (usage) => res.write(`event: usage\ndata: ${JSON.stringify({ ...usage, modelId: model.id, modelName: model.customName || model.name })}\n\n`);
+      if (toolUsage) sendUsage(toolUsage);
+      if (report) {
+        res.write(`event: report\ndata: ${JSON.stringify({ report })}\n\n`);
+        if (report.status === 'no_data') {
+          const text = parsed.data.language === 'zh'
+            ? `所选月份（${report.month}）没有收入或支出记录，可以尝试换一个月份。`
+            : `There are no income or expense records for ${report.month}. You can try another month.`;
+          res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
+        } else {
+          const followUpMessages = appendMonthlyReportToolResult(provider, messages, toolDecision, reportToolCall, report);
+          await streamAiChat(provider, model, settings.apiKeys[provider.id], followUpMessages, (text) => {
+            res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
+          }, { signal: controller.signal, onUsage: sendUsage });
+        }
+      } else {
+        await streamAiChat(provider, model, settings.apiKeys[provider.id], messages, (text) => {
+          res.write(`event: token\ndata: ${JSON.stringify({ text })}\n\n`);
+        }, { signal: controller.signal, onUsage: sendUsage });
+      }
       res.write(`event: done\ndata: ${JSON.stringify({ role: 'assistant', model: model.customName || model.name })}\n\n`);
       return res.end();
     } catch (error) {
       if (error.code === 'AI_CHAT_ABORTED' || controller.signal.aborted) return res.end();
-      const code = error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
+      const code = error.code === 'AI_TOOL_CALL_UNSUPPORTED' ? error.code : error.code?.startsWith('AI_TEST_') ? error.code : 'AI_TEST_NETWORK';
       if (res.headersSent) {
         res.write(`event: error\ndata: ${JSON.stringify({ code, retryable: isAiProbeRetryable(error), requestId: req.requestId })}\n\n`);
         return res.end();

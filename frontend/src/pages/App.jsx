@@ -423,7 +423,7 @@ export function App() {
           ) : page === 'income' ? (
             <IncomePage categories={financeData.categories} transactions={financeData.transactions} accounts={financeData.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} onRefreshFx={refreshFxRates} onAddSource={() => openIncomeSourceEditor()} onEditSource={openIncomeSourceEditor} />
           ) : page === 'activity' ? (
-            <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} />
+            <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} user={user} />
           ) : page === 'assistant' && user ? (
             <AssistantPage user={user} t={t} language={language} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
@@ -459,7 +459,7 @@ export function App() {
               <div className="right-card note-card">
                 <span className="tiny-label">{t('month')}</span><strong>{month}</strong><p>{t('overviewHint')}</p>
               </div>
-              {selectedAccount && <div className="right-card balance-note"><span className="tiny-label">{t('selectedAccount')}</span><strong>{selectedAccount.name}</strong><p>{selectedAccount.currency}</p></div>}
+              {financeData.accounts.length > 0 && <div className="right-card balance-note"><label className="tiny-label" htmlFor="rail-account-select">{t('selectedAccount')}</label><select id="rail-account-select" value={selectedAccountId ?? ''} onChange={(event) => setSelectedAccountId(event.target.value)}>{financeData.accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select>{selectedAccount && <p>{selectedAccount.currency}</p>}</div>}
               {user && <div className={`sync-label ${saveStatus}`}>{saveLabel}</div>}
             </>
           )}

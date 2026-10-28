@@ -1741,6 +1741,19 @@ h2 {
     font-size: 14px;
 }
 
+.balance-note select {
+    width: 100%;
+    min-width: 0;
+    margin-top: 9px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+}
+
 .page-section {
     max-width: 1000px;
     margin: 0 auto;
@@ -2353,6 +2366,224 @@ h2 {
     background: var(--accent-soft);
 }
 
+.monthly-report-card {
+    width: min(100%, 1000px);
+    margin-top: 14px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    margin-bottom: 14px;
+}
+
+.monthly-report-card>header,
+.monthly-report-chart-heading,
+.monthly-report-trend-labels {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.monthly-report-card>header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+.monthly-report-card>header strong {
+    margin-right: auto;
+}
+
+.monthly-report-card>header span,
+.monthly-report-chart-heading span {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.monthly-report-refresh {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--accent-dark);
+    cursor: pointer;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.monthly-report-refresh:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.monthly-report-refresh:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.monthly-report-refresh svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+.monthly-report-refresh.is-refreshing svg {
+    animation: report-refresh-spin 750ms linear infinite;
+}
+
+@keyframes report-refresh-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.monthly-report-totals {
+    display: grid;
+    gap: 7px;
+    margin-bottom: 14px;
+}
+
+.monthly-report-totals>div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 9px 10px;
+    border-radius: 9px;
+    background: var(--surface-soft);
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.monthly-report-totals>div>span:first-child {
+    color: var(--text);
+    font-weight: 700;
+}
+
+.monthly-report-totals strong,
+.monthly-report-chart li strong {
+    color: var(--text);
+}
+
+.monthly-report-chart,
+.monthly-report-trend,
+.monthly-report-list {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+}
+
+.monthly-report-pie-layout {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+    margin-top: 10px;
+}
+
+.monthly-report-pie {
+    width: 112px;
+    aspect-ratio: 1;
+    border: 7px solid var(--surface);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--line);
+}
+
+.monthly-report-pie-layout ul {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.monthly-report-pie-layout li {
+    display: grid;
+    grid-template-columns: 8px minmax(70px, 1fr) auto auto;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    font-size: 10px;
+}
+
+.monthly-report-pie-layout li>span:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.monthly-report-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.monthly-report-pie-layout li small {
+    color: var(--muted);
+}
+
+.monthly-report-trend svg {
+    width: 100%;
+    height: 95px;
+    overflow: visible;
+    margin-top: 9px;
+}
+
+.monthly-report-trend line {
+    stroke: var(--line);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.monthly-report-trend polyline {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.monthly-report-trend-labels {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.monthly-report-list>strong {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.monthly-report-list>div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 6px 12px;
+    padding: 7px 0;
+    border-top: 1px solid var(--line);
+    font-size: 10px;
+}
+
+@media (max-width: 520px) {
+    .monthly-report-pie-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .monthly-report-pie {
+        width: 96px;
+        margin: 0 auto;
+    }
+}
+
 .markdown-content> :first-child {
     margin-top: 0;
 }
@@ -2749,6 +2980,64 @@ h2 {
     display: grid;
     gap: 8px;
     margin-bottom: 15px;
+}
+
+.activity-report-entry {
+    display: flex;
+    justify-content: flex-end;
+    margin: -6px 0 14px;
+}
+
+.activity-report-entry button {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 40px;
+    padding: 0 12px;
+    border-color: var(--line);
+    border-radius: 999px;
+    color: var(--accent-dark);
+    font-size: 11px;
+    justify-content: space-between;
+}
+
+.activity-report-entry .budget-expand-mark {
+    width: 15px;
+    height: 15px;
+    transition: transform 160ms ease;
+}
+
+.monthly-report-empty {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 15px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+}
+
+.monthly-report-empty button {
+    flex: 0 0 auto;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--accent-dark);
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.monthly-report-empty button:disabled {
+    cursor: wait;
+    opacity: 0.6;
 }
 
 .activity-filters {
