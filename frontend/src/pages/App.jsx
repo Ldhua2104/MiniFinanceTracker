@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import { fetchLatestFxRates } from '../api/exchange-rates.js';
-import { clearAnonymousData, emptyFinanceData, hasFinanceData, loadAnonymousProfile, loadAnonymousData, loadServerData, mergeFinanceData, saveAnonymousProfile, saveAnonymousData, saveServerData } from '../data/finance-data.js';
+import { clearAnonymousData, emptyFinanceData, hasFinanceData, loadAnonymousProfile, loadAnonymousData, loadServerData, prepareFinanceMigration, retainUnmigratedFinanceData, saveAnonymousProfile, saveAnonymousData, saveServerData } from '../data/finance-data.js';
 import { materializeDueRecurringTransactions } from '../data/recurrence.js';
 import { migrateLocalAiSettings } from '../data/ai-settings.js';
 import { detectLanguage, saveLanguage, translate } from '../i18n.js';
@@ -213,22 +213,34 @@ export function App() {
     setPage('profile');
     setFinanceData(remote);
     if (hasFinanceData(local)) {
-      setMigration({ local, remote });
+      setMigration({ local, remote, cloudEmpty: !hasFinanceData(remote) });
       setFinanceDataReady(false);
     } else {
       setFinanceDataReady(true);
     }
   }
 
-  async function chooseMigration(choice) {
+  async function chooseMigration(actions) {
     if (!migration) return;
-    const result = choice === 'merge'
-      ? await saveServerData(mergeFinanceData(migration.remote, migration.local))
-      : migration.remote;
-    if (choice === 'merge') clearAnonymousData();
+    const hasImports = Object.values(actions).some((action) => action === 'merge');
+    const prepared = hasImports ? prepareFinanceMigration(migration.remote, migration.local, actions) : migration.remote;
+    const result = hasImports ? await saveServerData(prepared, { fallbackTitle: t('untitledTransaction') }) : migration.remote;
+    const remaining = retainUnmigratedFinanceData(migration.local, actions);
+    if (hasFinanceData(remaining)) saveAnonymousData(remaining);
+    else clearAnonymousData();
     setFinanceData(result);
     setMigration(null);
     setFinanceDataReady(true);
+  }
+
+  async function startFinanceMigration() {
+    if (!user) return false;
+    const local = loadAnonymousData();
+    if (!hasFinanceData(local)) return false;
+    const remote = await loadServerData();
+    setMigration({ local, remote, cloudEmpty: !hasFinanceData(remote) });
+    setPage('profile');
+    return true;
   }
 
   async function signOut() {
@@ -532,7 +544,7 @@ export function App() {
           {page === 'profile' ? (
             <ProfilePage user={user} anonymousProfile={anonymousProfile} onAnonymousProfileChange={setAnonymousProfile} onUserUpdated={setUser} t={t} onAuthenticated={onAuthenticated} onSignOut={signOut} migration={migration} onMigration={chooseMigration} />
           ) : page === 'settings' ? (
-            <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} user={user} />
+            <SettingsPage t={t} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} timeFormat={timeFormat} setTimeFormat={setTimeFormat} user={user} onStartMigration={startFinanceMigration} />
           ) : page === 'budgets' ? (
             <BudgetPage budgets={financeData.budgets} transactions={financeData.transactions} categories={financeData.categories} accounts={financeData.accounts} month={today().slice(0, 7)} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} fx={fx} onAdd={() => openBudgetEditor()} onEdit={openBudgetEditor} />
           ) : page === 'income' ? (

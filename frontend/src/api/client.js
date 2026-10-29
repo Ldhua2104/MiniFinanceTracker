@@ -52,6 +52,7 @@ export async function apiRequest(path, options = {}) {
       error.code = code;
       error.status = response.status;
       error.fields = payload?.error?.fields;
+      error.issues = payload?.error?.issues;
       error.requestId = payload?.meta?.requestId;
       throw error;
     }
@@ -89,6 +90,7 @@ export async function apiStream(path, options = {}, onEvent) {
       error.code = code;
       error.status = response.status;
       error.fields = payload?.error?.fields;
+      error.issues = payload?.error?.issues;
       error.requestId = payload?.meta?.requestId;
       throw error;
     }

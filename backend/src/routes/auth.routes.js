@@ -410,7 +410,10 @@ authRouter.put('/data', requireCsrf, requireUser, async (req, res, next) => {
     res.json({ data, meta: { requestId: req.requestId } });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Finance data is invalid', fields: z.flattenError(error).fieldErrors }, meta: { requestId: req.requestId } });
+      return res.status(400).json({ error: {
+        code: 'VALIDATION_ERROR', message: 'Finance data is invalid', fields: z.flattenError(error).fieldErrors,
+        issues: error.issues.slice(0, 30).map((issue) => ({ path: issue.path.join('.'), message: issue.message, code: issue.code }))
+      }, meta: { requestId: req.requestId } });
     }
     next(error);
   }

@@ -123,6 +123,59 @@ const monthlyReportMessages = {
     zh: { monthlyReport: '\u6708\u5ea6\u62a5\u544a', monthlyAnalysis: '\u6708\u5ea6\u6536\u652f\u5206\u6790', monthlyReportNoData: '\u672c\u6708\u6682\u65e0\u6536\u5165\u6216\u652f\u51fa\u8bb0\u5f55\u3002', refreshReport: '\u5237\u65b0\u62a5\u544a', reportIncome: '\u6536\u5165', reportExpenses: '\u652f\u51fa', reportNet: '\u51c0\u989d', reportExpenseShare: '\u6309\u9884\u7b97\u5206\u7c7b\u7684\u652f\u51fa', reportIncomeShare: '\u6309\u6765\u6e90\u5206\u7c7b\u7684\u6536\u5165', reportDailySpending: '\u6bcf\u65e5\u652f\u51fa\u8d8b\u52bf', reportBudgets: '\u9884\u7b97\u4f7f\u7528\u60c5\u51b5', reportSpent: '\u5df2\u652f\u51fa' }
 };
 
+const profileMessages = {
+    en: {
+        profilePageTitle: 'Personal profile', profilePageIntro: 'Manage your personal details and account settings.',
+        profileSection: 'Personal details', accountSection: 'Account information', editProfile: 'Edit profile',
+        cancelEdit: 'Cancel', resetAvatar: 'Use default avatar', localProfileNotice: 'This profile is saved only in this browser until you sign in.',
+        resetPasswordLink: 'Forgot password?', resetPasswordTitle: 'Reset your password',
+        resetPasswordHint: 'A verification code will be sent to your account email. After verification, you can choose a new password.',
+        resetPasswordComingSoon: 'Email verification and password reset are planned, but are not available yet.',
+        backToSignIn: 'Back to sign in', changePassword: 'Change password', passwordHidden: 'Password hidden',
+        changePasswordComingSoon: 'Password changes are not available yet.',
+        migrationTitle: 'Local data migration', migrationEmptyTitle: 'Move local data to your account', migrationEmptyText: 'Your account has no finance records yet. Choose which local data groups to transfer.',
+        migrationExistingTitle: 'Review local and account data', migrationExistingText: 'Choose how to handle each group. Matching records can be merged; skipped local data can remain in this browser.',
+        migrationLocalHeading: 'This browser', migrationCloudHeading: 'Your account', migrationActionHeading: 'Action', migrationItems: 'items',
+        migrationGroup_accounts: 'Accounts', migrationGroup_budgets: 'Budgets', migrationGroup_incomeSources: 'Income sources', migrationGroup_transactions: 'Transactions',
+        migrationImport: 'Transfer local data', migrationMerge: 'Merge local into account', migrationUseCloud: 'Use account data', migrationKeepLocal: 'Keep on this browser',
+        migrationTitleFallbackHint: 'transaction(s) have no title or note; they will be named “Untitled transaction”.', untitledTransaction: 'Untitled transaction',
+        migrationEmptyNote: 'Only selected data will be transferred. The browser copy is kept until the server confirms the transfer.',
+        migrationExistingNote: 'Account values are preserved for matching accounts. Same-name, same-currency budgets keep the larger amount. Transactions need their linked account and category.',
+        migrationConfirm: 'Confirm migration choices', migrationWorking: 'Migrating…', migrationFailed: 'Migration could not be completed. Your local data is still available.',
+        migrationNoData: 'There are no local finance records to migrate.', migrationNeedsLogin: 'Sign in to move local records to an account.', migrationLoadFailed: 'Could not load the account data. Please try again.',
+        migrationValidationFailed: 'The server rejected these fields:', migrationFieldsNeedAttention: 'These fields need attention:', migrationInvalidTransaction: 'A transaction is missing required data.', migrationMissingRequiredData: 'Required value missing',
+        migrationTooManyImages: 'A transaction contains more than four note images. Remove extra images and retry.',
+        migrationMissingBudgetCategory: 'A selected budget has no matching category. Choose to transfer its budget group.',
+        migrationBudgetCurrencyConflict: 'A budget has the same category as an account budget but a different currency. Keep one side for this group instead of merging.',
+        migrationTransactionDependencies: 'Some transactions need accounts or categories that are not selected for transfer. Choose merge for the linked groups or keep the transactions in this browser.'
+    },
+    zh: {
+        profilePageTitle: '\u4e2a\u4eba\u8d44\u6599', profilePageIntro: '\u7ba1\u7406\u4f60\u7684\u4e2a\u4eba\u4fe1\u606f\u548c\u8d26\u6237\u8bbe\u7f6e\u3002',
+        profileSection: '\u4e2a\u4eba\u4fe1\u606f', accountSection: '\u8d26\u6237\u4fe1\u606f', editProfile: '\u7f16\u8f91\u8d44\u6599',
+        cancelEdit: '\u53d6\u6d88', resetAvatar: '\u6062\u590d\u9ed8\u8ba4\u5934\u50cf', localProfileNotice: '\u6b64\u8d44\u6599\u4ec5\u4fdd\u5b58\u5728\u5f53\u524d\u6d4f\u89c8\u5668\u4e2d\uff0c\u767b\u5f55\u540e\u53ef\u4f7f\u7528\u8d26\u6237\u4fdd\u5b58\u3002',
+        resetPasswordLink: '\u5fd8\u8bb0\u5bc6\u7801\uff1f', resetPasswordTitle: '\u91cd\u7f6e\u5bc6\u7801',
+        resetPasswordHint: '\u6211\u4eec\u4f1a\u5411\u4f60\u7684\u8d26\u6237\u90ae\u7bb1\u53d1\u9001\u9a8c\u8bc1\u7801\u3002\u9a8c\u8bc1\u901a\u8fc7\u540e\uff0c\u4f60\u53ef\u4ee5\u8bbe\u7f6e\u65b0\u5bc6\u7801\u3002',
+        resetPasswordComingSoon: '\u90ae\u7bb1\u9a8c\u8bc1\u548c\u5bc6\u7801\u91cd\u7f6e\u529f\u80fd\u5df2\u5217\u5165\u8ba1\u5212\uff0c\u76ee\u524d\u6682\u672a\u5f00\u653e\u3002',
+        backToSignIn: '\u8fd4\u56de\u767b\u5f55', changePassword: '\u4fee\u6539\u5bc6\u7801', passwordHidden: '\u5bc6\u7801\u5df2\u9690\u85cf',
+        changePasswordComingSoon: '\u5bc6\u7801\u4fee\u6539\u529f\u80fd\u76ee\u524d\u6682\u672a\u5f00\u653e\u3002',
+        migrationTitle: '\u672c\u5730\u6570\u636e\u8fc1\u79fb', migrationEmptyTitle: '\u5c06\u672c\u5730\u6570\u636e\u8fc1\u79fb\u5230\u8d26\u6237', migrationEmptyText: '\u8d26\u6237\u4e2d\u8fd8\u6ca1\u6709\u6536\u652f\u6570\u636e\u3002\u8bf7\u9009\u62e9\u8981\u8fc1\u79fb\u7684\u672c\u5730\u6570\u636e\u5206\u7ec4\u3002',
+        migrationExistingTitle: '\u5bf9\u6bd4\u672c\u5730\u4e0e\u8d26\u6237\u6570\u636e', migrationExistingText: '\u5206\u522b\u9009\u62e9\u6bcf\u7ec4\u6570\u636e\u7684\u5904\u7406\u65b9\u5f0f\u3002\u53ef\u5408\u5e76\u5339\u914d\u9879\uff0c\u4e5f\u53ef\u5c06\u672c\u5730\u6570\u636e\u7559\u5728\u5f53\u524d\u6d4f\u89c8\u5668\u3002',
+        migrationLocalHeading: '\u672c\u5730\u6d4f\u89c8\u5668', migrationCloudHeading: '\u4e91\u7aef\u8d26\u6237', migrationActionHeading: '\u5904\u7406\u65b9\u5f0f', migrationItems: '\u9879',
+        migrationGroup_accounts: '\u8d26\u6237', migrationGroup_budgets: '\u9884\u7b97', migrationGroup_incomeSources: '\u6536\u5165\u6765\u6e90', migrationGroup_transactions: '\u6536\u652f\u8bb0\u5f55',
+        migrationImport: '\u8fc1\u79fb\u672c\u5730\u6570\u636e', migrationMerge: '\u5408\u5e76\u5230\u8d26\u6237', migrationUseCloud: '\u4f7f\u7528\u4e91\u7aef\u6570\u636e', migrationKeepLocal: '\u4fdd\u7559\u5728\u672c\u5730',
+        migrationTitleFallbackHint: '\u7b14\u6536\u652f\u7f3a\u5c11\u6807\u9898\u548c\u5907\u6ce8\uff0c\u8fc1\u79fb\u65f6\u4f1a\u4f7f\u7528\u201c\u672a\u547d\u540d\u4ea4\u6613\u201d\u4f5c\u4e3a\u5360\u4f4d\u6807\u9898\u3002', untitledTransaction: '\u672a\u547d\u540d\u4ea4\u6613',
+        migrationEmptyNote: '\u53ea\u4f1a\u8fc1\u79fb\u5df2\u9009\u62e9\u7684\u6570\u636e\u3002\u670d\u52a1\u5668\u786e\u8ba4\u6210\u529f\u524d\uff0c\u6d4f\u89c8\u5668\u4e2d\u7684\u526f\u672c\u4f1a\u4fdd\u7559\u3002',
+        migrationExistingNote: '\u5339\u914d\u8d26\u6237\u4fdd\u7559\u4e91\u7aef\u521d\u59cb\u91d1\u989d\uff1b\u540c\u540d\u540c\u5e01\u79cd\u7684\u9884\u7b97\u4fdd\u7559\u8f83\u5927\u503c\u3002\u6536\u652f\u8bb0\u5f55\u9700\u8981\u5df2\u9009\u4e2d\u5176\u5173\u8054\u7684\u8d26\u6237\u548c\u7c7b\u522b\u3002',
+        migrationConfirm: '\u786e\u8ba4\u8fc1\u79fb\u9009\u9879', migrationWorking: '\u6b63\u5728\u8fc1\u79fb\u2026', migrationFailed: '\u65e0\u6cd5\u5b8c\u6210\u8fc1\u79fb\uff0c\u672c\u5730\u6570\u636e\u4ecd\u4fdd\u7559\u3002',
+        migrationNoData: '\u6ca1\u6709\u53ef\u8fc1\u79fb\u7684\u672c\u5730\u6536\u652f\u8bb0\u5f55\u3002', migrationNeedsLogin: '\u8bf7\u5148\u767b\u5f55\uff0c\u518d\u5c06\u672c\u5730\u8bb0\u5f55\u8fc1\u79fb\u5230\u8d26\u6237\u3002', migrationLoadFailed: '\u65e0\u6cd5\u8bfb\u53d6\u8d26\u6237\u6570\u636e\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002',
+        migrationValidationFailed: '\u670d\u52a1\u5668\u62d2\u7edd\u4ee5\u4e0b\u5b57\u6bb5\uff1a', migrationFieldsNeedAttention: '\u4ee5\u4e0b\u5b57\u6bb5\u9700\u8981\u68c0\u67e5\uff1a', migrationInvalidTransaction: '\u6709\u4e00\u7b14\u6536\u652f\u7f3a\u5c11\u5fc5\u586b\u4fe1\u606f\u3002', migrationMissingRequiredData: '\u7f3a\u5c11\u5fc5\u586b\u503c',
+        migrationTooManyImages: '\u4e00\u7b14\u6536\u652f\u5305\u542b\u8d85\u8fc7\u56db\u5f20\u5907\u6ce8\u56fe\u7247\uff0c\u8bf7\u79fb\u9664\u591a\u4f59\u56fe\u7247\u540e\u91cd\u8bd5\u3002',
+        migrationMissingBudgetCategory: '\u6240\u9009\u9884\u7b97\u7f3a\u5c11\u5bf9\u5e94\u5206\u7c7b\uff0c\u8bf7\u9009\u62e9\u8fc1\u79fb\u9884\u7b97\u5206\u7ec4\u3002',
+        migrationBudgetCurrencyConflict: '\u9884\u7b97\u5206\u7c7b\u76f8\u540c\u4f46\u5e01\u79cd\u4e0d\u540c\uff0c\u65e0\u6cd5\u5408\u5e76\u3002\u8bf7\u4e3a\u8be5\u5206\u7ec4\u4fdd\u7559\u672c\u5730\u6216\u4e91\u7aef\u6570\u636e\u3002',
+        migrationTransactionDependencies: '\u90e8\u5206\u6536\u652f\u8bb0\u5f55\u4f9d\u8d56\u672a\u9009\u62e9\u8fc1\u79fb\u7684\u8d26\u6237\u6216\u7c7b\u522b\u3002\u8bf7\u5408\u5e76\u76f8\u5173\u5206\u7ec4\uff0c\u6216\u5c06\u8bb0\u5f55\u7559\u5728\u672c\u5730\u3002'
+    }
+};
+
 export function detectLanguage() {
     const saved = localStorage.getItem('mini-finance.language');
     if (saved === 'en' || saved === 'zh') return saved;
@@ -130,6 +183,7 @@ export function detectLanguage() {
 }
 
 export function translate(language, key) {
+    if (profileMessages[language]?.[key]) return profileMessages[language][key];
     if (tokenUsageMessages[language]?.[key]) return tokenUsageMessages[language][key];
     if (assistantImageMessages[language]?.[key]) return assistantImageMessages[language][key];
     if (monthlyReportMessages[language]?.[key]) return monthlyReportMessages[language][key];

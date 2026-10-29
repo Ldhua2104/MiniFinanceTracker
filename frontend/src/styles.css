@@ -870,7 +870,7 @@ h2 {
 }
 
 .profile-view {
-    max-width: 700px;
+    max-width: 760px;
     margin: 0 auto;
 }
 
@@ -971,6 +971,8 @@ h2 {
 
 .migration-panel {
     position: relative;
+    max-width: 760px;
+    padding: 25px;
 }
 
 .migration-icon {
@@ -998,8 +1000,55 @@ h2 {
 }
 
 .migration-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+}
+
+.migration-comparison {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: var(--surface);
+}
+
+.migration-comparison-heading,
+.migration-comparison-row {
     display: grid;
-    gap: 9px;
+    grid-template-columns: minmax(120px, 1fr) minmax(100px, .72fr) minmax(190px, 1.1fr);
+    align-items: center;
+    gap: 14px;
+    padding: 13px 16px;
+}
+
+.migration-comparison-heading {
+    background: var(--surface-soft);
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.migration-comparison-row + .migration-comparison-row { border-top: 1px solid var(--line); }
+.migration-group-name,
+.migration-cloud-count { display: grid; gap: 4px; }
+.migration-group-name strong,
+.migration-cloud-count strong { font-size: 12px; }
+.migration-group-name small,
+.migration-cloud-count small { color: var(--muted); font-size: 10px; }
+.migration-choice select { width: 100%; min-width: 0; }
+.migration-footnote { margin: 14px 0 0 !important; font-size: 10px !important; }
+.migration-title-warning { margin: 8px 0 0 !important; color: var(--warning, #997344) !important; font-size: 10px !important; }
+
+@media (max-width: 560px) {
+    .migration-panel { padding: 18px; }
+    .migration-comparison-heading,
+    .migration-comparison-row {
+        grid-template-columns: minmax(0, 1fr) minmax(60px, .45fr);
+        gap: 8px 12px;
+        padding: 12px;
+    }
+    .migration-comparison-heading > span { display: none; }
+    .migration-choice { grid-column: 1 / -1; }
+    .migration-actions .primary-button { width: 100%; }
 }
 
 .sr-only {
@@ -5332,9 +5381,22 @@ h2 {
 }
 
 .profile-card {
-    max-width: 640px;
+    max-width: 760px;
     padding: 25px;
 }
+
+.profile-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 22px;
+}
+
+.profile-section-heading .eyebrow { margin-bottom: 5px; }
+.profile-section-heading h2,
+.profile-account-card h2 { margin: 0; font-size: 18px; }
+.profile-edit-button { width: auto; min-height: 38px; padding: 0 16px; }
 
 .profile-identity {
     display: flex;
@@ -5404,8 +5466,7 @@ h2 {
     font-size: 12px;
 }
 
-.profile-details small,
-.profile-hint {
+.profile-details small {
     color: var(--muted);
     font-size: 10px;
     line-height: 1.6;
@@ -5415,12 +5476,36 @@ h2 {
     max-width: 380px;
 }
 
+.profile-name-display {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    color: var(--ink);
+    font-size: 16px;
+}
+
 .profile-details .profile-email {
     margin-bottom: 5px;
 }
 
-.profile-hint {
-    margin: 0;
+.profile-reset-avatar {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.profile-local-notice {
+    margin: 22px 0 0;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-soft);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
 }
 
 .profile-auth-prompt {
@@ -5451,6 +5536,42 @@ h2 {
     width: auto;
     min-width: 130px;
 }
+
+.profile-signed-actions .secondary-button { color: var(--muted); }
+
+.profile-account-card {
+    max-width: 760px;
+    margin-top: 14px;
+    padding: 24px 25px;
+}
+
+.profile-account-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.profile-account-heading .eyebrow { margin-bottom: 6px; }
+.profile-account-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(100px, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+    padding: 17px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+}
+
+.profile-account-grid > div { min-width: 0; display: grid; gap: 6px; }
+.profile-account-grid span { color: var(--muted); font-size: 10px; }
+.profile-account-grid strong { overflow-wrap: anywhere; font-size: 12px; }
+.profile-account-credentials { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.profile-account-credentials > div:last-child { grid-template-columns: auto auto; justify-content: start; align-items: center; gap: 7px 12px; }
+.profile-account-credentials > div:last-child > span { grid-column: 1 / -1; }
+.profile-account-credentials .profile-masked-password { letter-spacing: .12em; }
+.profile-change-password { justify-self: start; border: 0; padding: 3px 0; background: transparent; color: var(--accent-dark); font-size: 11px; font-weight: 600; cursor: pointer; }
+.profile-signout-button { width: auto; min-width: 130px; margin-top: 17px; }
 
 .profile-save-status {
     margin: 12px 0 0;
@@ -5505,6 +5626,34 @@ h2 {
     flex: 0 0 28px;
     font-size: 14px;
 }
+
+.auth-forgot-password {
+    display: block;
+    margin: -3px 0 14px auto;
+    border: 0;
+    padding: 4px 0;
+    background: transparent;
+    color: var(--accent-dark);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.password-reset-preview {
+    display: grid;
+    gap: 16px;
+}
+
+.password-reset-preview p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+.password-reset-preview .secondary-button { width: 100%; }
+.password-change-preview > p { margin: 0 0 18px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.password-change-preview > .secondary-button { width: 100%; }
 
 .ai-draft-backdrop {
     position: fixed;
@@ -5842,6 +5991,13 @@ h2 {
     .profile-card {
         padding: 18px;
     }
+
+    .profile-account-card { padding: 18px; }
+
+    .profile-account-grid,
+    .profile-account-credentials { grid-template-columns: 1fr; gap: 13px; }
+
+    .profile-section-heading { align-items: flex-start; }
 
     .profile-identity {
         align-items: flex-start;

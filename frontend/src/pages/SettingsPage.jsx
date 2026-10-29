@@ -41,8 +41,9 @@ export function normalizeAiSettings(settings) {
   };
 }
 
-export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat, user }) {
-  const [migrationNotice, setMigrationNotice] = useState(false);
+export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFormat, setTimeFormat, user, onStartMigration }) {
+  const [migrationNotice, setMigrationNotice] = useState('');
+  const [migrationWorking, setMigrationWorking] = useState(false);
   const [aiConfig, setAiConfig] = useState(emptyAiSettings);
   const [providerDraft, setProviderDraft] = useState({ type: 'openai', endpoint: '', apiKey: '' });
   const [modelDraft, setModelDraft] = useState({ providerId: '', name: '', customName: '' });
@@ -61,6 +62,23 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
   const [editingOriginalKey, setEditingOriginalKey] = useState('');
   const [aiSaveStatus, setAiSaveStatus] = useState('');
   const lastAiSaveFailure = useRef('');
+
+  async function openFinanceMigration() {
+    setMigrationNotice('');
+    setMigrationWorking(true);
+    try {
+      if (!user) {
+        setMigrationNotice(t('migrationNeedsLogin'));
+        return;
+      }
+      const started = await onStartMigration();
+      if (!started) setMigrationNotice(t('migrationNoData'));
+    } catch {
+      setMigrationNotice(t('migrationLoadFailed'));
+    } finally {
+      setMigrationWorking(false);
+    }
+  }
 
   function invalidateTaskTests() {
     setAiTaskTestResults({});
@@ -427,8 +445,8 @@ export function SettingsPage({ t, language, setLanguage, theme, setTheme, timeFo
       </article>
     </section>}
     <article className="panel migration-option-card">
-      <div><strong>{t('migrationOption')}</strong><p>{t('migrationOptionHint')}</p>{migrationNotice && <small className="migration-notice">{t('migrationComingSoon')}</small>}</div>
-      <button className="secondary-button" onClick={() => setMigrationNotice(true)}>{t('migrationOption')}</button>
+      <div><strong>{t('migrationOption')}</strong><p>{t('migrationOptionHint')}</p>{migrationNotice && <small className="migration-notice">{migrationNotice}</small>}</div>
+      <button className="secondary-button" type="button" disabled={migrationWorking} onClick={() => void openFinanceMigration()}>{migrationWorking ? t('migrationWorking') : t('migrationOption')}</button>
     </article>
   </section>;
 }
