@@ -450,6 +450,15 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
     setAiDraftOpen(false);
   }
 
+  function applyOcrResult({ text, addedImages = [] }) {
+    const combinedNote = [note.trim(), text].filter(Boolean).join('\n\n');
+    if (combinedNote.length > 500) return false;
+    setNote(combinedNote);
+    setNoteImages((current) => [...current, ...addedImages.filter((image) => !current.includes(image))]);
+    setAiDraftNotice(t('ocrTextInserted'));
+    return true;
+  }
+
   return (
     <section className="panel side-editor transaction-editor">
       <div className="editor-heading"><div className="editor-heading-title"><div className="eyebrow">{t('activity')}</div><h2>{initialTransaction ? t('editTransaction') : t('newTransaction')}</h2></div><div className="editor-heading-side"><div className="editor-time"><strong>{formatTransactionTime(transactionTime, timeFormat, language)}</strong></div></div></div>
@@ -488,17 +497,17 @@ export function TransactionForm({ account, accounts, categories, budgets, user, 
             </div>}
           </div>}
           <label className="field"><span>{t('note')}</span><small>{t('transactionNoteHint')}</small><textarea name="note" rows="3" maxLength="500" value={note} onChange={(event) => setNote(event.target.value)} /></label>
-          {user && <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImages.length ? t('addImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={chooseNoteImage} /></label>{noteImages.length > 0 && <div className="note-image-preview">{noteImages.map((image, index) => <div className="note-image-preview-item" key={`${index}-${image.slice(0, 30)}`}><img src={image} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}>{t('removeImage')}</button></div>)}</div>}<small>{t('aiDraftImageLimit')}</small></div>}
+          <div className="field note-image-field"><span>{t('noteImage')}</span><label className="secondary-button image-upload-button">{noteImages.length ? t('addImage') : t('attachImage')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={chooseNoteImage} /></label>{noteImages.length > 0 && <div className="note-image-preview">{noteImages.map((image, index) => <div className="note-image-preview-item" key={`${index}-${image.slice(0, 30)}`}><img src={image} alt={t('noteImage')} /><button type="button" className="text-button" onClick={() => setNoteImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}>{t('removeImage')}</button></div>)}</div>}<small>{t('aiDraftImageLimit')}</small></div>
           {error && <div className="inline-error">{error}</div>}
           {aiDraftNotice && <div className="ai-draft-notice" role="status">{aiDraftNotice}</div>}
           <div className="transaction-form-actions">
-            {user && !initialTransaction && <button className="secondary-button ai-draft-trigger" type="button" onClick={() => { setAiDraftNotice(''); setAiDraftOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 13.8 9l6.4 2-6.4 2-1.8 6.5L10.2 13 3.8 11l6.4-2L12 2.5Z" /><path d="m19 15 .9 2.7 2.6.8-2.6.8L19 22l-.8-2.7-2.7-.8 2.7-.8L19 15Z" /></svg>{t('aiDraftButton')}</button>}
+            {!initialTransaction && <button className="secondary-button ai-draft-trigger" type="button" onClick={() => { setAiDraftNotice(''); setAiDraftOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 13.8 9l6.4 2-6.4 2-1.8 6.5L10.2 13 3.8 11l6.4-2L12 2.5Z" /><path d="m19 15 .9 2.7 2.6.8-2.6.8L19 22l-.8-2.7-2.7-.8 2.7-.8L19 15Z" /></svg>{t('aiDraftButton')}</button>}
             <button className="primary-button" type="submit" disabled={working}>{working ? '?' : initialTransaction ? t('updateTransaction') : t('save')} <span>{initialTransaction ? '↻' : '+'}</span></button>
             {initialTransaction && <button className="delete-transaction-button" type="button" onClick={() => confirmDeleteTransaction(initialTransaction.id, t, onDelete)} aria-label={t('delete')} title={t('delete')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 3v6m4-6v6" /></svg><span>{t('delete')}</span></button>}
           </div>
         </form>
       </>}
-      {aiDraftOpen && user && selectedAccount && <TransactionAiDraftModal noteImages={noteImages} account={selectedAccount} type={type} language={language} t={t} onClose={() => setAiDraftOpen(false)} onDraft={applyAiDraft} />}
+      {aiDraftOpen && selectedAccount && <TransactionAiDraftModal aiEnabled={Boolean(user)} noteImages={noteImages} account={selectedAccount} type={type} language={language} t={t} onClose={() => setAiDraftOpen(false)} onDraft={applyAiDraft} onOcrResult={applyOcrResult} />}
     </section>
   );
 }

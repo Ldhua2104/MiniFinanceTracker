@@ -14,10 +14,13 @@ function readImage(file) {
   });
 }
 
-export function TransactionAiDraftModal({ noteImages = [], account, type, language, t, onClose, onDraft }) {
+export function TransactionAiDraftModal({ noteImages = [], account, type, language, t, onClose, onDraft, onOcrResult }) {
   const [images, setImages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [recognitionMode, setRecognitionMode] = useState('ai');
+  const [ocrLanguage, setOcrLanguage] = useState(language === 'zh' ? 'chi_sim+eng' : 'eng');
+  const [ocrText, setOcrText] = useState('');
+  const [ocrProgress, setOcrProgress] = useState(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
 
@@ -37,6 +40,8 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
     try {
       const selected = await Promise.all(files.map(readImage));
       setImages((current) => [...current, ...selected]);
+      setOcrText('');
+      setOcrProgress(null);
       setError('');
     } catch {
       setError(t('imageTypeError'));
@@ -47,7 +52,37 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
     event.preventDefault();
     if (working) return;
     if (recognitionMode === 'ocr') {
-      setError(t('ocrRecognitionNotReady'));
+      if (ocrText.trim()) {
+        const applied = onOcrResult?.({ text: ocrText.trim(), addedImages: images.map((image) => image.data) });
+        if (applied === false) {
+          setError(t('ocrNoteLimit'));
+          return;
+        }
+        onClose();
+        return;
+      }
+      const sourceImages = [...noteImages, ...images.map((image) => image.data)];
+      if (!sourceImages.length) {
+        setError(t('ocrNoImages'));
+        return;
+      }
+      setWorking(true);
+      setError('');
+      setOcrProgress({ stage: 'prepare', progress: 0 });
+      try {
+        const { recognizeImagesLocally } = await import('../utils/ocr.js');
+        const text = await recognizeImagesLocally(sourceImages, ocrLanguage, setOcrProgress);
+        setOcrText(text);
+        setOcrProgress({ stage: 'complete', progress: 1 });
+      } catch (failure) {
+        const errorKey = failure.message === 'OCR_NO_TEXT' ? 'ocrNoText'
+          : ['OCR_IMAGE_LOAD_FAILED', 'OCR_IMAGE_EXTERNAL_URL', 'OCR_IMAGE_INVALID'].includes(failure.message) ? 'ocrImageLoadFailed'
+            : 'ocrFailed';
+        setError(t(errorKey));
+        setOcrProgress(null);
+      } finally {
+        setWorking(false);
+      }
       return;
     }
     setWorking(true);
@@ -58,7 +93,6 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
         body: JSON.stringify({
           accountId: account.id,
           type,
-          language,
           prompt,
           existingImages: noteImages,
           images: images.map((image) => image.data)
@@ -97,16 +131,18 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
       <form onSubmit={createDraft}>
         <fieldset className="recognition-mode-field">
           <legend>{t('recognitionMethod')}</legend>
-          <div className="recognition-mode-options" role="radiogroup" aria-label={t('recognitionMethod')}>
-            <button className={`recognition-mode-option ${recognitionMode === 'ai' ? 'selected' : ''}`} type="button" role="radio" aria-checked={recognitionMode === 'ai'} onClick={() => { setRecognitionMode('ai'); setError(''); }}>
+          <div className="recognition-mode-options" role="group" aria-label={t('recognitionMethod')}>
+            <button className={`recognition-mode-option ${recognitionMode === 'ai' ? 'selected' : ''}`} type="button" aria-pressed={recognitionMode === 'ai'} onClick={() => { setRecognitionMode('ai'); setError(''); setOcrProgress(null); }}>
               <strong>{t('aiRecognitionOption')}</strong><small>{t('aiRecognitionOptionHint')}</small>
             </button>
-            <button className={`recognition-mode-option ${recognitionMode === 'ocr' ? 'selected' : ''}`} type="button" role="radio" aria-checked={recognitionMode === 'ocr'} onClick={() => { setRecognitionMode('ocr'); setError(''); }}>
+            <button className={`recognition-mode-option ${recognitionMode === 'ocr' ? 'selected' : ''}`} type="button" aria-pressed={recognitionMode === 'ocr'} onClick={() => { setRecognitionMode('ocr'); setError(''); setOcrProgress(null); }}>
               <strong>{t('ocrRecognitionOption')}</strong><small>{t('ocrRecognitionOptionHint')}</small>
             </button>
           </div>
+          {recognitionMode === 'ocr' && <p className="recognition-mode-notice" role="status">{t('ocrLocalPrivacy')}</p>}
         </fieldset>
-        <label className="field ai-draft-prompt"><span>{t('message')}</span><textarea rows="3" maxLength="3000" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={t('aiDraftPromptPlaceholder')} /></label>
+        {recognitionMode === 'ai' && <label className="field ai-draft-prompt"><span>{t('message')}</span><textarea rows="3" maxLength="3000" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={t('aiDraftPromptPlaceholder')} /></label>}
+        {recognitionMode === 'ocr' && <label className="field"><span>{t('ocrLanguage')}</span><select value={ocrLanguage} onChange={(event) => { setOcrLanguage(event.target.value); setOcrText(''); setOcrProgress(null); setError(''); }}><option value="eng">{t('ocrEnglish')}</option><option value="chi_sim">{t('ocrSimplifiedChinese')}</option><option value="chi_sim+eng">{t('ocrChineseEnglish')}</option></select></label>}
         <div className="field ai-draft-images"><span>{t('aiDraftImages')}</span>
           <div className="ai-draft-image-list">
             {noteImages.map((image, index) => <div className="ai-draft-image-item" key={`existing-${index}`}><img src={image} alt={t('noteImage')} /><span>{t('aiDraftCurrentNoteImage')}</span></div>)}
@@ -115,8 +151,10 @@ export function TransactionAiDraftModal({ noteImages = [], account, type, langua
           </div>
           <small>{t('aiDraftImageLimit')}</small>
         </div>
+        {recognitionMode === 'ocr' && ocrProgress && <div className="ocr-progress" role="status"><div><span>{t(`ocrProgress${ocrProgress.stage[0].toUpperCase()}${ocrProgress.stage.slice(1)}`)}</span><span>{Math.round(ocrProgress.progress * 100)}%</span></div><progress max="1" value={ocrProgress.progress} /></div>}
+        {recognitionMode === 'ocr' && ocrText && <label className="field ocr-result-field"><span>{t('ocrResult')}</span><textarea rows="8" value={ocrText} onChange={(event) => { setOcrText(event.target.value); setError(''); }} /></label>}
         {error && <p className="ai-draft-error" role="alert">{error}</p>}
-        <footer className="ai-draft-actions"><button className="secondary-button" type="button" onClick={onClose} disabled={working}>{t('cancel')}</button><button className="primary-button" type="submit" disabled={working}>{working ? <><span className="ai-test-spinner" aria-hidden="true" />{t('aiDraftWorking')}</> : recognitionMode === 'ocr' ? t('ocrRecognitionRun') : t('aiDraftRun')}</button></footer>
+        <footer className="ai-draft-actions"><button className="secondary-button" type="button" onClick={onClose} disabled={working}>{t('cancel')}</button><button className="primary-button" type="submit" disabled={working || (recognitionMode === 'ocr' && !ocrText && !noteImages.length && !images.length)}>{working ? <><span className="ai-test-spinner" aria-hidden="true" />{t('aiDraftWorking')}</> : recognitionMode === 'ocr' ? ocrText ? t('ocrInsertNote') : t('ocrRecognitionRun') : t('aiDraftRun')}</button></footer>
       </form>
     </section>
   </div>;

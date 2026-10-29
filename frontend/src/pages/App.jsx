@@ -39,6 +39,7 @@ export function App() {
   const [editingIncomeSource, setEditingIncomeSource] = useState(null);
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [assistantTransactionDraft, setAssistantTransactionDraft] = useState(null);
+  const [assistantEntityDraft, setAssistantEntityDraft] = useState(null);
   const [editorLoadVersion, setEditorLoadVersion] = useState(0);
   const [newTransactionTimestamp, setNewTransactionTimestamp] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
@@ -258,6 +259,7 @@ export function App() {
     setFinanceData((current) => ({ ...current, accounts: [...current.accounts, account] }));
     setSelectedAccountId(account.id);
     setEditingAccount(null);
+    setAssistantEntityDraft(null);
     setRightEditor(null);
   }
 
@@ -265,6 +267,7 @@ export function App() {
     setFinanceData((current) => ({ ...current, accounts: current.accounts.map((item) => item.id === account.id ? account : item) }));
     setRightEditor(null);
     setEditingAccount(null);
+    setAssistantEntityDraft(null);
   }
 
   function deleteAccount(id) {
@@ -273,12 +276,15 @@ export function App() {
       accounts: current.accounts.filter((item) => item.id !== id),
       transactions: current.transactions.filter((item) => item.accountId !== id)
     }));
+    setSelectedAccountId((current) => current === id ? financeData.accounts.find((item) => item.id !== id)?.id ?? null : current);
     setRightEditor(null);
     setEditingAccount(null);
+    setAssistantEntityDraft(null);
   }
 
   function openAccountEditor(account = null) {
     setRightRailCollapsed(false);
+    setAssistantEntityDraft(null);
     setEditingAccount(account);
     setRightEditor('account');
   }
@@ -289,6 +295,7 @@ export function App() {
 
   function openBudgetEditor(budget = null) {
     setRightRailCollapsed(false);
+    setAssistantEntityDraft(null);
     setEditingBudget(budget);
     setRightEditor('budget');
   }
@@ -319,12 +326,14 @@ export function App() {
     });
     if (closeEditor) {
       setEditingBudget(null);
+      setAssistantEntityDraft(null);
       setRightEditor(null);
     }
   }
 
   function openIncomeSourceEditor(source = null) {
     setRightRailCollapsed(false);
+    setAssistantEntityDraft(null);
     setEditingIncomeSource(source);
     setRightEditor('income-source');
   }
@@ -339,6 +348,7 @@ export function App() {
     });
     if (closeEditor) {
       setEditingIncomeSource(null);
+      setAssistantEntityDraft(null);
       setRightEditor(null);
     }
   }
@@ -358,18 +368,33 @@ export function App() {
         : current.transactions
     }));
     setEditingIncomeSource(null);
+    setAssistantEntityDraft(null);
     setRightEditor(null);
     return true;
   }
 
   function deleteBudget(id) {
-    setFinanceData((current) => ({ ...current, budgets: current.budgets.filter((item) => item.id !== id) }));
+    const budget = financeData.budgets.find((item) => item.id === id);
+    if (budget) {
+      const fallback = financeData.categories.find((item) => item.type === 'expense' && item.id !== budget.categoryId && item.name.trim().toLocaleLowerCase() === 'other');
+      const hasTransactions = financeData.transactions.some((item) => item.type === 'expense' && item.categoryId === budget.categoryId);
+      setFinanceData((current) => ({
+        ...current,
+        budgets: current.budgets.filter((item) => item.id !== id),
+        categories: hasTransactions && !fallback ? current.categories : current.categories.filter((item) => item.id !== budget.categoryId),
+        transactions: fallback
+          ? current.transactions.map((item) => item.type === 'expense' && item.categoryId === budget.categoryId ? { ...item, categoryId: fallback.id } : item)
+          : current.transactions
+      }));
+    }
     setEditingBudget(null);
+    setAssistantEntityDraft(null);
     setRightEditor(null);
   }
 
   function openTransactionEditor() {
     setRightRailCollapsed(false);
+    setAssistantEntityDraft(null);
     setEditingTransaction(null);
     setAssistantTransactionDraft(null);
     setEditorLoadVersion((version) => version + 1);
@@ -413,6 +438,30 @@ export function App() {
     setEditorLoadVersion((version) => version + 1);
     setNewTransactionTimestamp(localTransactionTimestamp());
     setRightEditor('transaction');
+  }
+
+  function openAssistantFinanceAction(action) {
+    if (!action?.entity || !['account', 'budget', 'income_source'].includes(action.entity)) return;
+    setRightRailCollapsed(false);
+    setAssistantToolsOpen(false);
+    setEditingTransaction(null);
+    setAssistantTransactionDraft(null);
+    const editor = action.entity === 'income_source' ? 'income-source' : action.entity;
+    if (action.action === 'create' && action.draft) {
+      const draft = { ...action.draft, id: action.draft.id || crypto.randomUUID() };
+      setAssistantEntityDraft({ entity: action.entity, draft, key: crypto.randomUUID() });
+      setEditingAccount(null);
+      setEditingBudget(null);
+      setEditingIncomeSource(null);
+    } else if (action.action === 'delete' && action.item) {
+      setAssistantEntityDraft(null);
+      setEditingAccount(action.entity === 'account' ? action.item : null);
+      setEditingBudget(action.entity === 'budget' ? action.item : null);
+      setEditingIncomeSource(action.entity === 'income_source' ? { ...action.item, type: 'income', archived: false } : null);
+    } else {
+      return;
+    }
+    setRightEditor(editor);
   }
 
   const saveLabel = saveStatus === 'failed' ? t('saveFailed') : saveStatus === 'saved' ? t('saved') : '…';
@@ -471,7 +520,7 @@ export function App() {
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} user={user} />
           ) : page === 'assistant' && user ? (
-            <AssistantPage user={user} t={t} language={language} selectedAccountId={selectedAccountId} onCreateTransactionDraft={openAssistantTransactionDraft} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
+            <AssistantPage user={user} t={t} language={language} selectedAccountId={selectedAccountId} onCreateTransactionDraft={openAssistantTransactionDraft} onFinanceAction={openAssistantFinanceAction} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 
@@ -483,16 +532,16 @@ export function App() {
             </button>
           </div>
           <div className="right-rail-content">
-          {user && page === 'assistant' && assistantToolsOpen ? (
-            <AssistantToolsPanel t={t} language={language} model={assistantContext.model} conversations={assistantContext.conversations} />
-          ) : rightEditor === 'account' ? (
-            <AccountForm key={editingAccount?.id ?? 'new-account'} t={t} initialAccount={editingAccount} onCancel={() => { setRightEditor(null); setEditingAccount(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
+          {rightEditor === 'account' ? (
+            <AccountForm key={editingAccount?.id ?? assistantEntityDraft?.key ?? 'new-account'} t={t} initialAccount={editingAccount} draftAccount={assistantEntityDraft?.entity === 'account' ? assistantEntityDraft.draft : null} onCancel={() => { setRightEditor(null); setEditingAccount(null); setAssistantEntityDraft(null); }} onSubmit={editingAccount ? updateAccount : addAccount} onDelete={deleteAccount} />
           ) : rightEditor === 'budget' ? (
-            <BudgetForm key={editingBudget?.id ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || financeData.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} categories={financeData.categories} budgets={financeData.budgets} defaultCurrency={financeData.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
+            <BudgetForm key={editingBudget?.id ?? assistantEntityDraft?.key ?? 'new-budget'} initialBudget={editingBudget ? { ...editingBudget, name: editingBudget.name || financeData.categories.find((category) => category.id === editingBudget.categoryId)?.name || '' } : null} draftBudget={assistantEntityDraft?.entity === 'budget' ? assistantEntityDraft.draft : null} categories={financeData.categories} budgets={financeData.budgets} defaultCurrency={financeData.accounts.find((account) => account.id === selectedAccountId)?.currency || 'USD'} t={t} onCancel={() => { setEditingBudget(null); setAssistantEntityDraft(null); setRightEditor(null); }} onSubmit={saveBudget} onDelete={deleteBudget} />
           ) : rightEditor === 'income-source' ? (
-            <IncomeSourceForm key={editingIncomeSource?.id ?? 'new-income-source'} initialSource={editingIncomeSource} categories={financeData.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
+            <IncomeSourceForm key={editingIncomeSource?.id ?? assistantEntityDraft?.key ?? 'new-income-source'} initialSource={editingIncomeSource} draftSource={assistantEntityDraft?.entity === 'income_source' ? assistantEntityDraft.draft : null} categories={financeData.categories} t={t} onCancel={() => { setEditingIncomeSource(null); setAssistantEntityDraft(null); setRightEditor(null); }} onSubmit={saveIncomeSource} onDelete={deleteIncomeSource} />
           ) : rightEditor === 'transaction' || rightEditor === 'edit-transaction' ? (
             <TransactionForm key={`${editingTransaction?.id ?? assistantTransactionDraft?.id ?? 'new'}-${editorLoadVersion}`} account={selectedAccount} accounts={financeData.accounts} categories={financeData.categories} budgets={financeData.budgets} user={user} t={t} language={language} timeFormat={timeFormat} fx={fx} initialTransaction={editingTransaction} draftTransaction={assistantTransactionDraft} openedAt={newTransactionTimestamp} onCancel={() => { setRightEditor(null); setEditingTransaction(null); setAssistantTransactionDraft(null); }} onSubmit={submitTransaction} onDelete={removeTransaction} onCreateAccount={addTransactionAccount} onCreateBudget={(budget) => saveBudget(budget, { closeEditor: false })} onCreateIncomeSource={(source) => saveIncomeSource(source, { closeEditor: false })} />
+          ) : user && page === 'assistant' && assistantToolsOpen ? (
+            <AssistantToolsPanel t={t} language={language} model={assistantContext.model} conversations={assistantContext.conversations} />
           ) : (
             <>
               <div className="right-card account-card">

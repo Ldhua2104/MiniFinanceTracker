@@ -24,7 +24,7 @@ function readConversations(storageKey) {
   }
 }
 
-export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, selectedAccountId, onCreateTransactionDraft, onContextChange }) {
+export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, selectedAccountId, onCreateTransactionDraft, onFinanceAction, onContextChange }) {
   const storageKey = `mini-finance.ai-conversations.v1${user?.id ? `.${user.id}` : '.anonymous'}`;
   const [storedConversations, setStoredConversations] = useState({ key: '', items: [] });
   const [selectedId, setSelectedId] = useState('');
@@ -163,7 +163,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     try {
       await apiStream('/auth/assistant/chat', {
         method: 'POST',
-        body: JSON.stringify({ messages: contextMessages, language, selectedAccountId: selectedAccountId || '' })
+        body: JSON.stringify({ messages: contextMessages, selectedAccountId: selectedAccountId || '' })
       }, (event, data) => {
         if (event === 'token' && typeof data.text === 'string') {
           responseText += data.text;
@@ -180,6 +180,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
           const sourceImages = contextMessages.flatMap((message) => message.role === 'user' ? (message.images ?? []) : []).slice(-4);
           onCreateTransactionDraft?.({ ...data.draft, ...(sourceImages.length ? { noteImages: sourceImages } : {}) });
         }
+        if (event === 'finance_action' && data.action) onFinanceAction?.(data);
       });
       const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, report: responseReport, createdAt: new Date().toISOString() };
       setStoredConversations((current) => ({
@@ -207,6 +208,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
         : error.code === 'AI_CHAT_MODEL_UNASSIGNED' || error.code === 'AI_CHAT_MODEL_NOT_FOUND' ? 'assistantModelUnassigned'
           : error.code === 'AI_CHAT_KEY_MISSING' || error.code === 'AI_TEST_KEY_MISSING' ? 'assistantModelMissingKey'
             : error.code === 'AI_TEST_AUTH_FAILED' ? 'aiTestAuthFailed'
+              : error.code === 'AI_TEST_REQUEST_REJECTED' ? 'aiTestRequestRejected'
               : error.code === 'AI_TOOL_CALL_UNSUPPORTED' ? 'assistantToolUnsupported'
                 : error.code === 'AI_TOOL_CALL_NOT_SELECTED' ? 'assistantToolNotSelected' : 'assistantSendFailed');
     } finally {

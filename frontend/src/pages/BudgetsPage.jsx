@@ -172,11 +172,12 @@ export function BudgetRemainingChart({ points, currency, locale, label }) {
     </svg></div>;
 }
 
-export function BudgetForm({ initialBudget, categories, budgets, defaultCurrency = 'USD', t, onCancel, onSubmit, onDelete, embedded = false }) {
-    const [name, setName] = useState(initialBudget?.name ?? '');
-    const [amount, setAmount] = useState(initialBudget?.amount ?? '100.00');
-    const [currency, setCurrency] = useState(initialBudget?.currency || defaultCurrency);
-    const [color, setColor] = useState(initialBudget?.color || budgetColors[0]);
+export function BudgetForm({ initialBudget, draftBudget = null, categories, budgets, defaultCurrency = 'USD', t, onCancel, onSubmit, onDelete, embedded = false }) {
+    const values = initialBudget ?? draftBudget;
+    const [name, setName] = useState(values?.name ?? '');
+    const [amount, setAmount] = useState(values?.amount ?? '100.00');
+    const [currency, setCurrency] = useState(values?.currency || defaultCurrency);
+    const [color, setColor] = useState(values?.color || budgetColors[0]);
     const [error, setError] = useState('');
     const editing = Boolean(initialBudget);
 
@@ -186,12 +187,12 @@ export function BudgetForm({ initialBudget, categories, budgets, defaultCurrency
         const cents = moneyToCents(amount.trim());
         if (!cleanName || cleanName.length > 60 || cents === null || cents <= 0n) return setError(t('fieldRequired'));
         const existingCategory = categories.find((category) => category.type === 'expense' && category.name.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase());
-        const categoryId = initialBudget?.categoryId || existingCategory?.id || crypto.randomUUID();
+        const categoryId = initialBudget?.categoryId || draftBudget?.categoryId || existingCategory?.id || crypto.randomUUID();
         const duplicate = budgets.some((budget) => budget.id !== initialBudget?.id && (budget.categoryId === categoryId || budget.name?.trim().toLocaleLowerCase() === cleanName.toLocaleLowerCase()));
         if (duplicate) return setError(t('budgetAlreadyExists'));
         setError('');
         onSubmit({
-            id: initialBudget?.id ?? crypto.randomUUID(),
+            id: initialBudget?.id ?? draftBudget?.id ?? crypto.randomUUID(),
             name: cleanName,
             categoryId,
             amount: centsToAmount(cents),

@@ -5541,6 +5541,106 @@ h2 {
     color: #a53e37;
 }
 
+.recognition-mode-field {
+    min-width: 0;
+    margin: 0 0 16px;
+    padding: 0;
+    border: 0;
+}
+
+.recognition-mode-field legend {
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.recognition-mode-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.recognition-mode-option {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--surface);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.recognition-mode-option:hover {
+    border-color: var(--accent);
+    background: var(--surface-soft);
+}
+
+.recognition-mode-option.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 2px var(--line);
+}
+
+.recognition-mode-option strong {
+    font-size: 12px;
+}
+
+.recognition-mode-option small {
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.recognition-mode-notice {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.ocr-progress {
+    display: grid;
+    gap: 7px;
+    margin: 2px 0 14px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.ocr-progress>div {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ocr-progress progress {
+    width: 100%;
+    height: 7px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    background: var(--surface-soft);
+    accent-color: var(--accent);
+}
+
+.ocr-result-field textarea {
+    width: 100%;
+    min-height: 140px;
+    resize: vertical;
+    padding: 11px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
 .ai-draft-prompt textarea {
     width: 100%;
     min-height: 90px;

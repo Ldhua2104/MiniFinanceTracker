@@ -15,9 +15,10 @@ export function AccountCard({ account, selected, transactions, locale, onSelect 
     );
 }
 
-export function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = null, embedded = false }) {
+export function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = null, draftAccount = null, embedded = false }) {
     const editing = Boolean(initialAccount);
-    const [currency, setCurrency] = useState(initialAccount?.currency ?? 'USD');
+    const values = initialAccount ?? draftAccount;
+    const [currency, setCurrency] = useState(values?.currency ?? 'USD');
     const [error, setError] = useState('');
     function submit(event) {
         event.preventDefault();
@@ -27,19 +28,19 @@ export function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = 
         const openingBalance = editing ? initialAccount.openingBalance : String(form.get('openingBalance')).trim() || '0.00';
         if (!name || (!editing && moneyToCents(openingBalance) === null)) return setError(t('fieldRequired'));
         setError('');
-        onSubmit({ id: initialAccount?.id ?? crypto.randomUUID(), name, note, currency, openingBalance: editing ? openingBalance : centsToAmount(moneyToCents(openingBalance)) });
+        onSubmit({ id: initialAccount?.id ?? draftAccount?.id ?? crypto.randomUUID(), name, note, currency, openingBalance: editing ? openingBalance : centsToAmount(moneyToCents(openingBalance)) });
     }
     const fields = <>
         <label className="field">
             <span>{t('accountName')}</span>
-            <input name="name" type="text" maxLength="60" defaultValue={initialAccount?.name ?? ''} autoFocus={!embedded} required />
+            <input name="name" type="text" maxLength="60" defaultValue={values?.name ?? ''} autoFocus={!embedded} required />
         </label>
         {!editing &&
             <label className="field">
                 <span>{t('openingBalance')}</span>
                 <div className="transaction-amount-input">
                     <span>{currencySymbol(currency)}</span>
-                    <input name="openingBalance" type="number" min="0" step="0.01" defaultValue="0.00" required /></div>
+                    <input name="openingBalance" type="number" min="0" step="0.01" defaultValue={draftAccount?.openingBalance ?? '0.00'} required /></div>
             </label>}
         <label className="field">
             <span>{t('currency')}</span>
@@ -47,7 +48,7 @@ export function AccountForm({ t, onCancel, onSubmit, onDelete, initialAccount = 
         </label>
         <label className="field">
             <span>{t('accountNote')}</span>
-            <textarea name="note" rows="3" maxLength="500" defaultValue={initialAccount?.note ?? ''} />
+            <textarea name="note" rows="3" maxLength="500" defaultValue={values?.note ?? ''} />
         </label>
         {error && <div className="inline-error">{error}</div>}
     </>;

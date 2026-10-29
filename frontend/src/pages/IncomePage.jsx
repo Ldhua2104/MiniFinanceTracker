@@ -65,9 +65,10 @@ export function IncomePage({ categories, transactions, accounts, month, locale, 
   </section>;
 }
 
-export function IncomeSourceForm({ initialSource, categories, t, onCancel, onSubmit, onDelete, embedded = false }) {
-  const [title, setTitle] = useState(initialSource?.name ?? '');
-  const [color, setColor] = useState(initialSource?.color || budgetColors[0]);
+export function IncomeSourceForm({ initialSource, draftSource = null, categories, t, onCancel, onSubmit, onDelete, embedded = false }) {
+  const values = initialSource ?? draftSource;
+  const [title, setTitle] = useState(values?.name ?? '');
+  const [color, setColor] = useState(values?.color || budgetColors[0]);
   const [error, setError] = useState('');
   const editing = Boolean(initialSource);
 
@@ -80,7 +81,7 @@ export function IncomeSourceForm({ initialSource, categories, t, onCancel, onSub
       && category.name.trim().toLocaleLowerCase() === cleanTitle.toLocaleLowerCase());
     if (duplicate) return setError(t('incomeSourceExists'));
     setError('');
-    onSubmit({ id: initialSource?.id ?? crypto.randomUUID(), name: cleanTitle, color, type: 'income', archived: false });
+    onSubmit({ id: initialSource?.id ?? draftSource?.id ?? crypto.randomUUID(), name: cleanTitle, color, type: 'income', archived: false });
     if (embedded) setTitle('');
   }
 

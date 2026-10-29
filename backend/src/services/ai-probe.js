@@ -185,6 +185,50 @@ function geminiFunctionSchema(schema) {
   };
 }
 
+function normalizeDsmlText(text) {
+  return String(text || '')
+    .replace(/｜/g, '|')
+    .replace(/[‹]/g, '<')
+    .replace(/<\s*\|\s*DSML\s*\|\s*\|?\s*/gi, '<|DSML|')
+    .replace(/<\s*\/\s*\|\s*DSML\s*\|\s*\|?\s*/gi, '</|DSML|');
+}
+
+function parseDsmlToolCalls(text, tools) {
+  const normalized = normalizeDsmlText(text);
+  const allowedNames = new Set(tools.map((tool) => tool.name));
+  const calls = [];
+  const invokePattern = /<\|DSML\|invoke\s+name=(['"])(.*?)\1\s*>([\s\S]*?)<\/\|DSML\|invoke\s*>/gi;
+  for (const match of normalized.matchAll(invokePattern)) {
+    const name = match[2].trim();
+    if (!allowedNames.has(name)) continue;
+    const args = {};
+    const parameterPattern = /<\|DSML\|parameter\s+name=(['"])(.*?)\1(?:\s+string=(['"])(true|false)\3)?\s*>([\s\S]*?)<\/\|DSML\|parameter\s*>/gi;
+    for (const parameter of match[3].matchAll(parameterPattern)) {
+      const key = parameter[2].trim();
+      const value = parameter[5].trim();
+      const stringValue = parameter[4] !== 'false';
+      args[key] = stringValue ? value
+        : value === 'true' ? true
+          : value === 'false' ? false
+            : value !== '' && Number.isFinite(Number(value)) ? Number(value) : value;
+    }
+    if (name === 'manage_finance_item') {
+      args.entity ??= args.itemType;
+      if (args.entity === 'budget') {
+        args.monthlyAmount ??= args.amount;
+        if (args.monthlyAmount !== undefined) args.monthlyAmount = String(args.monthlyAmount);
+      }
+      delete args.itemType;
+      delete args.amount;
+      delete args.category;
+    }
+    calls.push({ id: `dsml-${calls.length}`, name, arguments: args });
+  }
+  const markerIndex = normalized.indexOf('<|DSML|');
+  const cleanText = (markerIndex >= 0 ? normalized.slice(0, markerIndex) : normalized).trim();
+  return { calls, text: cleanText };
+}
+
 export async function requestAiToolCalls(provider, model, apiKey, messages, tools, { mode = 'required' } = {}) {
   if (!apiKey?.trim()) throw Object.assign(new Error(), { code: 'AI_TEST_KEY_MISSING' });
   let endpoint;
@@ -291,6 +335,14 @@ export async function requestAiToolCalls(provider, model, apiKey, messages, tool
     if (message?.function_call?.name) toolCalls.push({ id: 'legacy-function-call', name: message.function_call.name, arguments: message.function_call.arguments ?? '{}' });
     text = typeof message?.content === 'string' ? message.content : '';
     providerMessage = message ? { ...message, role: 'assistant' } : null;
+  }
+  if (!toolCalls.length && text) {
+    const parsedDsml = parseDsmlToolCalls(text, tools);
+    toolCalls = parsedDsml.calls;
+    text = parsedDsml.text;
+    if (toolCalls.length && providerMessage?.content) {
+      providerMessage = { ...providerMessage, content: parsedDsml.text };
+    }
   }
   const rawUsage = payload.usage ?? payload.usageMetadata ?? {};
   const inputTokens = Number(rawUsage.input_tokens ?? rawUsage.prompt_tokens ?? rawUsage.promptTokenCount ?? 0);
@@ -435,21 +487,17 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
   const address = await resolvePublicAddress(url.hostname);
   let response = await postStreamingJson(url, headers, JSON.stringify(body), address, signal);
   if (response.statusCode === 400 && body.stream_options) {
-    const chunks = [];
     let size = 0;
     for await (const chunk of response) {
       size += chunk.length;
       if (size > 256 * 1024) break;
-      chunks.push(chunk);
     }
-    const errorText = Buffer.concat(chunks).toString('utf8');
-    if (/stream[_ ]options/i.test(errorText)) {
-      const fallbackBody = { ...body };
-      delete fallbackBody.stream_options;
-      response = await postStreamingJson(url, headers, JSON.stringify(fallbackBody), address, signal);
-    } else {
-      throw Object.assign(new Error(), { code: responseError(response.statusCode), retryable: false });
-    }
+    // Some OpenAI-compatible providers reject `stream_options` but omit the
+    // unsupported field from their error message. Usage is optional, so retry
+    // once without it on any 400 response.
+    const fallbackBody = { ...body };
+    delete fallbackBody.stream_options;
+    response = await postStreamingJson(url, headers, JSON.stringify(fallbackBody), address, signal);
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     let size = 0;
@@ -458,13 +506,36 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
       if (size > 256 * 1024) break;
       if (signal?.aborted) break;
     }
-    throw Object.assign(new Error(), { code: responseError(response.statusCode || 0), retryable: response.statusCode === 429 || response.statusCode >= 500 });
+    throw Object.assign(new Error(), {
+      code: responseError(response.statusCode || 0),
+      httpStatus: response.statusCode || 0,
+      retryable: response.statusCode === 429 || response.statusCode >= 500
+    });
   }
 
   const decoder = new TextDecoder();
   let buffer = '';
   let emitted = false;
   let usage = null;
+  let pendingAssistantText = '';
+  let dsmlMarkupDetected = false;
+  const dsmlStart = /[<‹]\s*[|｜]\s*DSML/i;
+  function emitSafeAssistantText(text) {
+    if (dsmlMarkupDetected) return;
+    pendingAssistantText += text;
+    const marker = dsmlStart.exec(pendingAssistantText);
+    if (marker) {
+      const safePrefix = pendingAssistantText.slice(0, marker.index);
+      if (safePrefix) onToken(safePrefix);
+      pendingAssistantText = '';
+      dsmlMarkupDetected = true;
+      return;
+    }
+    if (pendingAssistantText.length > 64) {
+      onToken(pendingAssistantText.slice(0, -64));
+      pendingAssistantText = pendingAssistantText.slice(-64);
+    }
+  }
   function consumeLine(rawLine) {
     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (!line.startsWith('data:')) return;
@@ -489,7 +560,7 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
     const text = streamedText(provider.type, payload);
     if (text) {
       emitted = true;
-      onToken(text);
+      emitSafeAssistantText(text);
     }
     if (payload.error) throw Object.assign(new Error(), { code: responseError(payload.error.status || 502) });
   }
@@ -505,6 +576,8 @@ export async function streamAiChat(provider, model, apiKey, messages, onToken, {
   }
   buffer += decoder.decode();
   if (buffer.trim()) consumeLine(buffer);
+  if (dsmlMarkupDetected) throw Object.assign(new Error(), { code: 'AI_TOOL_CALL_UNSUPPORTED' });
+  if (pendingAssistantText) onToken(pendingAssistantText);
   if (!emitted) throw Object.assign(new Error(), { code: 'AI_TEST_INVALID_RESPONSE' });
   if (usage && onUsage) onUsage(usage);
 }
