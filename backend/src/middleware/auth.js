@@ -74,6 +74,16 @@ export async function requireUser(req, res, next) {
   }
 }
 
+export function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({
+      error: { code: 'FORBIDDEN', message: 'Administrator access is required' },
+      meta: { requestId: req.requestId }
+    });
+  }
+  return next();
+}
+
 export function optionalUser(req, _res, next) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return next();
