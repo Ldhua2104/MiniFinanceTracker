@@ -434,7 +434,11 @@ export function App() {
     setRightRailCollapsed(false);
     setAssistantToolsOpen(false);
     setEditingTransaction(null);
-    setAssistantTransactionDraft({ ...draft, id: crypto.randomUUID() });
+    setAssistantEntityDraft(null);
+    setEditingAccount(null);
+    setEditingBudget(null);
+    setEditingIncomeSource(null);
+    setAssistantTransactionDraft({ ...draft, id: crypto.randomUUID(), assistantActionKey: draft.assistantActionKey || crypto.randomUUID() });
     setEditorLoadVersion((version) => version + 1);
     setNewTransactionTimestamp(localTransactionTimestamp());
     setRightEditor('transaction');
@@ -449,12 +453,12 @@ export function App() {
     const editor = action.entity === 'income_source' ? 'income-source' : action.entity;
     if (action.action === 'create' && action.draft) {
       const draft = { ...action.draft, id: action.draft.id || crypto.randomUUID() };
-      setAssistantEntityDraft({ entity: action.entity, draft, key: crypto.randomUUID() });
+      setAssistantEntityDraft({ entity: action.entity, draft, key: action.clientActionKey || crypto.randomUUID() });
       setEditingAccount(null);
       setEditingBudget(null);
       setEditingIncomeSource(null);
     } else if (action.action === 'delete' && action.item) {
-      setAssistantEntityDraft(null);
+      setAssistantEntityDraft({ entity: action.entity, draft: null, key: action.clientActionKey || crypto.randomUUID() });
       setEditingAccount(action.entity === 'account' ? action.item : null);
       setEditingBudget(action.entity === 'budget' ? action.item : null);
       setEditingIncomeSource(action.entity === 'income_source' ? { ...action.item, type: 'income', archived: false } : null);
@@ -462,6 +466,22 @@ export function App() {
       return;
     }
     setRightEditor(editor);
+  }
+
+  function undoAssistantStagedAction(actionKey) {
+    if (!actionKey) return;
+    if (assistantEntityDraft?.key === actionKey) {
+      setAssistantEntityDraft(null);
+      setEditingAccount(null);
+      setEditingBudget(null);
+      setEditingIncomeSource(null);
+      setRightEditor(null);
+    }
+    if (assistantTransactionDraft?.assistantActionKey === actionKey) {
+      setAssistantTransactionDraft(null);
+      setEditingTransaction(null);
+      setRightEditor(null);
+    }
   }
 
   const saveLabel = saveStatus === 'failed' ? t('saveFailed') : saveStatus === 'saved' ? t('saved') : '…';
@@ -520,7 +540,7 @@ export function App() {
           ) : page === 'activity' ? (
             <ActivityPage items={activityTransactions} allTransactions={financeData.transactions} categories={financeData.categories} budgets={financeData.budgets} accounts={financeData.accounts} month={month} onMonthChange={setMonth} locale={language === 'zh' ? 'zh-CN' : 'en-US'} t={t} language={language} timeFormat={timeFormat} reportCurrency={reportCurrency} onReportCurrencyChange={setReportCurrency} fx={fx} onRefreshFx={refreshFxRates} onDelete={deleteTransaction} onAdd={openTransactionEditor} onEdit={openTransactionForEdit} user={user} />
           ) : page === 'assistant' && user ? (
-            <AssistantPage user={user} t={t} language={language} selectedAccountId={selectedAccountId} onCreateTransactionDraft={openAssistantTransactionDraft} onFinanceAction={openAssistantFinanceAction} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
+            <AssistantPage user={user} t={t} language={language} selectedAccountId={selectedAccountId} onCreateTransactionDraft={openAssistantTransactionDraft} onFinanceAction={openAssistantFinanceAction} onUndoStagedAction={undoAssistantStagedAction} activeUndoActionKey={assistantEntityDraft?.key || assistantTransactionDraft?.assistantActionKey || ''} onOpenSettings={() => setPage('settings')} toolsOpen={assistantToolsOpen} onToggleTools={() => setAssistantToolsOpen((open) => !open)} onContextChange={setAssistantContext} />
           ) : <OverviewPage accounts={financeData.accounts} categories={financeData.categories} transactions={financeData.transactions} selectedAccount={selectedAccount} selectedAccountId={selectedAccountId} trend={trend} month={month} onMonthChange={setMonth} language={language} timeFormat={timeFormat} t={t} onSelectAccount={(account) => { setSelectedAccountId(account.id); openAccountEditor(account); }} onAddAccount={() => openAccountEditor()} onAddTransaction={openTransactionEditor} onDeleteTransaction={deleteTransaction} onEditTransaction={openTransactionForEdit} />}
         </main>
 

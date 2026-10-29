@@ -215,6 +215,7 @@ function parseDsmlToolCalls(text, tools) {
     if (name === 'manage_finance_item') {
       args.entity ??= args.itemType;
       if (args.entity === 'budget') {
+        args.name ??= args.category;
         args.monthlyAmount ??= args.amount;
         if (args.monthlyAmount !== undefined) args.monthlyAmount = String(args.monthlyAmount);
       }

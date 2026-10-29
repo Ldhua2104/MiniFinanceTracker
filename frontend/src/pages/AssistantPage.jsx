@@ -24,7 +24,7 @@ function readConversations(storageKey) {
   }
 }
 
-export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, selectedAccountId, onCreateTransactionDraft, onFinanceAction, onContextChange }) {
+export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTools, language, selectedAccountId, onCreateTransactionDraft, onFinanceAction, onUndoStagedAction, activeUndoActionKey, onContextChange }) {
   const storageKey = `mini-finance.ai-conversations.v1${user?.id ? `.${user.id}` : '.anonymous'}`;
   const [storedConversations, setStoredConversations] = useState({ key: '', items: [] });
   const [selectedId, setSelectedId] = useState('');
@@ -160,6 +160,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
     let responseText = '';
     let streamedUsage = null;
     let responseReport = null;
+    let stagedActionKey = '';
     try {
       await apiStream('/auth/assistant/chat', {
         method: 'POST',
@@ -177,12 +178,16 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
           setStreamingReport(data.report);
         }
         if (event === 'transaction_draft' && data.draft) {
+          stagedActionKey = crypto.randomUUID();
           const sourceImages = contextMessages.flatMap((message) => message.role === 'user' ? (message.images ?? []) : []).slice(-4);
-          onCreateTransactionDraft?.({ ...data.draft, ...(sourceImages.length ? { noteImages: sourceImages } : {}) });
+          onCreateTransactionDraft?.({ ...data.draft, assistantActionKey: stagedActionKey, ...(sourceImages.length ? { noteImages: sourceImages } : {}) });
         }
-        if (event === 'finance_action' && data.action) onFinanceAction?.(data);
+        if (event === 'finance_action' && data.action) {
+          stagedActionKey = crypto.randomUUID();
+          onFinanceAction?.({ ...data, clientActionKey: stagedActionKey });
+        }
       });
-      const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, report: responseReport, createdAt: new Date().toISOString() };
+      const assistantMessage = { id: crypto.randomUUID(), role: 'assistant', content: responseText, report: responseReport, ...(stagedActionKey ? { undoActionKey: stagedActionKey } : {}), createdAt: new Date().toISOString() };
       setStoredConversations((current) => ({
         ...current,
         items: current.items.map((item) => item.id === conversationId ? {
@@ -247,7 +252,7 @@ export function AssistantPage({ user, t, onOpenSettings, toolsOpen, onToggleTool
         </header>
 
         <div className={`assistant-message-area ${selectedConversation?.messages?.length ? 'has-messages' : ''}`} ref={messageAreaRef} aria-live="polite">
-          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div>{message.content && <MarkdownContent content={message.content} />}{message.images?.length > 0 && <div className="assistant-message-images">{message.images.map((image, index) => <a key={index} href={image} target="_blank" rel="noreferrer"><img src={image} alt={t('assistantAttachedImage')} loading="lazy" /></a>)}</div>}{message.report && <MonthlyReportCard report={message.report} language={language} t={t} />}</div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}{streamingReport && <MonthlyReportCard report={streamingReport} language={language} t={t} />}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
+          {selectedConversation?.messages?.length || (sending && streamingConversationId === selectedId) ? <div className="assistant-message-list">{selectedConversation?.messages?.map((message) => <article className={`assistant-message ${message.role}`} key={message.id}><div>{message.content && <MarkdownContent content={message.content} />}{message.images?.length > 0 && <div className="assistant-message-images">{message.images.map((image, index) => <a key={index} href={image} target="_blank" rel="noreferrer"><img src={image} alt={t('assistantAttachedImage')} loading="lazy" /></a>)}</div>}{message.report && <MonthlyReportCard report={message.report} language={language} t={t} />}{message.role === 'assistant' && message.undoActionKey && message.undoActionKey === activeUndoActionKey && <button className="assistant-undo-action" type="button" onClick={() => onUndoStagedAction?.(message.undoActionKey)}>{t('undoAssistantAction')}</button>}</div></article>)}{sending && streamingConversationId === selectedId && <article className="assistant-message assistant"><div>{streamingText ? <MarkdownContent content={streamingText} /> : <span className="assistant-typing-indicator"><i /><i /><i /></span>}{streamingReport && <MonthlyReportCard report={streamingReport} language={language} t={t} />}</div></article>}</div> : <div className="assistant-empty-chat"><span className="assistant-mark" aria-hidden="true">m</span><h3>{selectedConversation ? t('conversationReady') : t('assistantWelcome')}</h3><p>{selectedConversation ? t('conversationReadyHint') : t('assistantWelcomeHint')}</p>{!selectedConversation && <button className="primary-button" type="button" onClick={createConversation}>{t('newConversation')}</button>}</div>}
         </div>
 
         <div className="assistant-composer-wrap">
